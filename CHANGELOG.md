@@ -4,6 +4,28 @@ Semua perubahan penting pada proyek ini didokumentasikan di file ini.
 Format mengikuti [Keep a Changelog](https://keepachangelog.com/id-ID/1.1.0/),
 dan versi mengikuti [Semantic Versioning](https://semver.org/lang/id/).
 
+## [1.3.0] - 2026-11-10
+
+### Ditambahkan
+- **Tema terang/gelap** (🌙/☀) yang tersimpan dan langsung berlaku di jendela
+  lirik.
+- **Slider opasitas latar** untuk mengatur transparansi panel menu (30–100%).
+- **Ingat posisi & ukuran jendela PiP** — jendela dibuka lagi di tempat dan
+  ukuran terakhir, termasuk setelah browser ditutup.
+- **Ekspor / impor cache lirik** (JSON) untuk membackup lirik manual, offset,
+  dan pengaturan antar perangkat.
+- **Fast-path kana** (`lib/kana.js`): baris Jepang tanpa kanji diubah ke romaji
+  tanpa memuat kamus Kuromoji 17 MB; kamus hanya dipakai saat ada kanji.
+- **Fallback popup window** saat browser tidak mendukung Document PiP.
+- **GitHub Actions** untuk unit test, syntax check, validasi manifest, dan
+  packaging zip otomatis. Zip juga diunggah ke GitHub Release untuk tag `v*`.
+
+### Diubah
+- Pengaturan sekarang mencakup `theme`, `opacity`, dan `pipBounds`, dengan
+  normalisasi nilai saat dimuat.
+- Style PiP memakai variabel CSS agar tema terang/gelap konsisten di header,
+  tombol, input, hasil pencarian, editor, dan toast.
+
 ## [1.2.1] - 2026-11-10
 
 ### Diperbaiki

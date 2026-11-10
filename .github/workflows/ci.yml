@@ -1,0 +1,54 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Unit test
+        run: npm test
+
+      - name: Syntax check
+        run: npm run check
+
+      - name: Validate manifest
+        run: node -e "const m=require('./manifest.json'); if(!m.version || m.manifest_version !== 3) { console.error('manifest tidak valid'); process.exit(1); } console.log('manifest v' + m.version);"
+
+      - name: Package extension
+        run: |
+          mkdir -p dist
+          zip -r dist/brave-mini-lyrics.zip \
+            manifest.json background.js content.js pip.css \
+            lib icons dict \
+            kuroshiro.min.js kuroshiro-analyzer-kuromoji.min.js \
+            -x "*.DS_Store"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: brave-mini-lyrics
+          path: dist/brave-mini-lyrics.zip
+
+      - name: Publish release asset
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/brave-mini-lyrics.zip
+          generate_release_notes: true

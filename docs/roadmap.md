@@ -31,22 +31,22 @@ Status: `selesai`, `dikerjakan`, `rencana`.
 
 | # | Fitur / perbaikan | Status |
 |---|---|---|
-| 3 | Popup window sebagai alternatif PiP (fallback) | rencana |
-| 14 | Fast-path kana tanpa memuat kamus 17 MB | rencana |
-| — | Tema, opasitas, dan ukuran font lanjutan | rencana |
-| — | Ingat posisi & ukuran jendela PiP | rencana |
-| — | Export / import cache lirik | rencana |
-| — | GitHub Actions: lint, test, zip rilis | rencana |
+| 3 | Popup window sebagai alternatif PiP (fallback) | selesai |
+| 14 | Fast-path kana tanpa memuat kamus 17 MB | selesai |
+| — | Tema, opasitas, dan ukuran font lanjutan | selesai |
+| — | Ingat posisi & ukuran jendela PiP | selesai |
+| — | Export / import cache lirik | selesai |
+| — | GitHub Actions: lint, test, zip rilis | selesai |
 
 ## Catatan teknis
 
 - **Poin 3 (popup biasa):** Document PiP sudah bisa di-resize dan selalu di atas
-  jendela lain. Jendela `chrome.windows.create({ type: "popup" })` bisa di-resize
-  bebas dan dipindah ke monitor lain, tetapi tidak selalu di atas. Rencana:
-  PiP tetap menjadi mode utama, popup menjadi fallback.
-- **Poin 14 (Wanakana):** Wanakana hanya mengubah kana ke romaji, tidak bisa
-  kanji. Karena itu Wanakana dipakai sebagai fast-path untuk baris tanpa kanji,
-  sedangkan Kuroshiro tetap dipakai saat ada kanji.
+  jendela lain. Jendela popup biasa dipakai sebagai fallback saat
+  `documentPictureInPicture` tidak tersedia; popup bisa dipindah bebas tetapi
+  tidak selalu di atas jendela lain.
+- **Poin 14 (kana fast-path):** `lib/kana.js` mengubah hiragana/katakana ke
+  romaji tanpa kamus. Kuroshiro (kamus 17 MB) hanya dimuat kalau baris mengandung
+  kanji, karena kanji butuh analisis morfologi.
 - **Poin 15 (sumber baru):** NetEase/QQ Music diakses dari background service
   worker karena CORS. QQ Music menolak permintaan lirik tanpa header `Referer`,
   dan `fetch()` tidak bisa mengatur header itu, jadi service worker memasang

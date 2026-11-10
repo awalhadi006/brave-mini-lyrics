@@ -4,6 +4,7 @@ if (window === window.top) {
     'use strict';
 
     const Core = globalThis.BMLCore;
+    const Kana = globalThis.BMLKana;
     if (!Core) {
         console.error('Brave Mini Lyrics: lib/lrc.js belum termuat.');
     } else {
@@ -21,6 +22,13 @@ if (window === window.top) {
         const CACHE_TTL_MS = 30 * 24 * 60 * 60 * 1000;
         const SEARCH_TIMEOUT_MS = 8000;
         const MAX_GOOGLE_CHARS = 3500;
+        const DEFAULT_SETTINGS = {
+            fontScale: 1,
+            latinMode: false,
+            theme: 'dark',
+            opacity: 0.62,
+            pipBounds: null
+        };
 
         let pipWindow = null;
         let parsedLyrics = [];
@@ -29,7 +37,7 @@ if (window === window.top) {
         let currentHighlightIndex = -1;
         let isSyncedLyrics = false;
         let lyricsTimeOffset = 0;
-        let settings = { fontScale: 1, latinMode: false };
+        let settings = Object.assign({}, DEFAULT_SETTINGS);
         let menuOpen = false;
         let menuArmed = false;
         let menuHoverTimer = null;
@@ -50,6 +58,7 @@ if (window === window.top) {
         let boundVideoElement = null;
         let latinState = createLatinState();
         let tapState = null;
+        let pipBoundsSaveTimer = null;
 
         const kuroshiroPromise = { current: null };
 
@@ -160,11 +169,31 @@ if (window === window.top) {
         async function loadSettings() {
             try {
                 const obj = await chrome.storage.local.get(SETTINGS_KEY);
-                settings = Object.assign({ fontScale: 1, latinMode: false }, obj[SETTINGS_KEY] || {});
+                settings = Object.assign({}, DEFAULT_SETTINGS, obj[SETTINGS_KEY] || {});
                 settings.fontScale = Math.min(1.8, Math.max(0.7, Number(settings.fontScale) || 1));
                 settings.latinMode = Boolean(settings.latinMode);
+                settings.theme = settings.theme === 'light' ? 'light' : 'dark';
+                settings.opacity = Math.min(1, Math.max(0.3, Number(settings.opacity) || DEFAULT_SETTINGS.opacity));
+
+                const bounds = settings.pipBounds;
+                const validBounds =
+                    bounds &&
+                    isFinite(bounds.width) &&
+                    isFinite(bounds.height) &&
+                    isFinite(bounds.left) &&
+                    isFinite(bounds.top) &&
+                    bounds.width >= 240 &&
+                    bounds.height >= 240;
+                settings.pipBounds = validBounds
+                    ? {
+                          width: Math.round(bounds.width),
+                          height: Math.round(bounds.height),
+                          left: Math.round(bounds.left),
+                          top: Math.round(bounds.top)
+                      }
+                    : null;
             } catch (error) {
-                settings = { fontScale: 1, latinMode: false };
+                settings = Object.assign({}, DEFAULT_SETTINGS);
             }
         }
 
@@ -589,7 +618,10 @@ if (window === window.top) {
 
         function applyFontScale() {
             if (!pipWindow) return;
-            pipWindow.document.body.style.setProperty('--lyric-scale', String(settings.fontScale));
+            const body = pipWindow.document.body;
+            body.style.setProperty('--lyric-scale', String(settings.fontScale));
+            body.style.setProperty('--overlay-alpha', String(settings.opacity));
+            body.dataset.theme = settings.theme === 'light' ? 'light' : 'dark';
         }
 
         function changeFontScale(delta) {
@@ -599,6 +631,24 @@ if (window === window.top) {
             applyFontScale();
             saveSettings({ fontScale: next });
             toast('Ukuran font ' + Math.round(next * 100) + '%');
+        }
+
+        function toggleTheme() {
+            settings.theme = settings.theme === 'light' ? 'dark' : 'light';
+            applyFontScale();
+            saveSettings({ theme: settings.theme });
+            const button = byId('btn-theme');
+            if (button) button.textContent = settings.theme === 'light' ? '☀' : '🌙';
+            toast(settings.theme === 'light' ? 'Tema terang' : 'Tema gelap');
+        }
+
+        let opacitySaveTimer = null;
+        function setOpacity(percent) {
+            const next = Math.min(1, Math.max(0.3, Number(percent) / 100));
+            settings.opacity = next;
+            applyFontScale();
+            clearTimeout(opacitySaveTimer);
+            opacitySaveTimer = setTimeout(() => saveSettings({ opacity: settings.opacity }), 350);
         }
 
         // ==========================================
@@ -713,6 +763,16 @@ if (window === window.top) {
                     <button type="button" class="sync-btn" id="btn-font-minus" title="Perkecil font">A−</button>
                     <button type="button" class="sync-btn" id="btn-font-plus" title="Perbesar font">A+</button>
                     <button type="button" class="sync-btn" id="btn-maximize" title="Perbesar jendela">⛶</button>
+                </div>
+                <div class="display-controls">
+                    <button type="button" class="sync-btn" id="btn-theme" title="Ganti tema">${settings.theme === 'light' ? '☀' : '🌙'}</button>
+                    <label class="opacity-control" title="Opasitas latar menu">
+                        <span>Latar</span>
+                        <input type="range" id="opacity-range" min="30" max="100" step="5" value="${Math.round(settings.opacity * 100)}">
+                    </label>
+                    <button type="button" class="sync-btn" id="btn-export" title="Ekspor cache lirik">⬇ Ekspor</button>
+                    <button type="button" class="sync-btn" id="btn-import" title="Impor cache lirik">⬆ Impor</button>
+                    <input type="file" id="import-file" accept="application/json,.json" hidden>
                 </div>
             `;
         }
@@ -855,6 +915,29 @@ if (window === window.top) {
             const btnMaximize = byId('btn-maximize');
             if (btnMaximize) btnMaximize.addEventListener('click', toggleMaximize);
 
+            const btnTheme = byId('btn-theme');
+            if (btnTheme) btnTheme.addEventListener('click', toggleTheme);
+
+            const opacityRange = byId('opacity-range');
+            if (opacityRange) {
+                opacityRange.value = String(Math.round(settings.opacity * 100));
+                opacityRange.addEventListener('input', (event) => setOpacity(event.target.value));
+            }
+
+            const btnExport = byId('btn-export');
+            if (btnExport) btnExport.addEventListener('click', exportCache);
+
+            const btnImport = byId('btn-import');
+            const importFile = byId('import-file');
+            if (btnImport && importFile) {
+                btnImport.addEventListener('click', () => importFile.click());
+                importFile.addEventListener('change', () => {
+                    const file = importFile.files && importFile.files[0];
+                    importFile.value = '';
+                    importCacheFile(file);
+                });
+            }
+
             const btnEdit = byId('btn-edit');
             if (btnEdit) btnEdit.addEventListener('click', openEditor);
 
@@ -915,6 +998,122 @@ if (window === window.top) {
                 } catch (error) {
                     console.warn('Brave Mini Lyrics: gagal mengembalikan ukuran jendela', error);
                 }
+            }
+        }
+
+        // ==========================================
+        // POSISI & UKURAN JENDELA
+        // ==========================================
+        function currentPipBounds() {
+            if (!pipWindow || pipWindow.isMaximized) return null;
+            const bounds = {
+                width: Math.round(pipWindow.outerWidth),
+                height: Math.round(pipWindow.outerHeight),
+                left: Math.round(pipWindow.screenX),
+                top: Math.round(pipWindow.screenY)
+            };
+            if (
+                !isFinite(bounds.width) ||
+                !isFinite(bounds.height) ||
+                !isFinite(bounds.left) ||
+                !isFinite(bounds.top) ||
+                bounds.width < 240 ||
+                bounds.height < 240
+            ) {
+                return null;
+            }
+            return bounds;
+        }
+
+        function savePipBounds(force) {
+            const bounds = currentPipBounds();
+            if (!bounds) return;
+            const previous = settings.pipBounds;
+            const same =
+                previous &&
+                previous.width === bounds.width &&
+                previous.height === bounds.height &&
+                previous.left === bounds.left &&
+                previous.top === bounds.top;
+            if (same && !force) return;
+            settings.pipBounds = bounds;
+            saveSettings({ pipBounds: bounds });
+        }
+
+        // ==========================================
+        // EKSPOR / IMPOR CACHE
+        // ==========================================
+        async function exportCache() {
+            if (!pipWindow) return;
+            try {
+                const all = await chrome.storage.local.get(null);
+                const data = {};
+                for (const key of Object.keys(all)) {
+                    if (key.indexOf('bml:v2:') === 0) data[key] = all[key];
+                }
+                const payload = {
+                    app: 'brave-mini-lyrics',
+                    version: 1,
+                    exportedAt: new Date().toISOString(),
+                    data: data
+                };
+                const blob = new pipWindow.Blob([JSON.stringify(payload, null, 2)], {
+                    type: 'application/json'
+                });
+                const url = pipWindow.URL.createObjectURL(blob);
+                const link = pipWindow.document.createElement('a');
+                const stamp = new Date().toISOString().slice(0, 10);
+                link.href = url;
+                link.download = 'brave-mini-lyrics-' + stamp + '.json';
+                pipWindow.document.body.appendChild(link);
+                link.click();
+                link.remove();
+                setTimeout(() => {
+                    if (pipWindow) pipWindow.URL.revokeObjectURL(url);
+                }, 10000);
+                toast('Cache lirik diekspor');
+            } catch (error) {
+                console.error('Brave Mini Lyrics: gagal mengekspor cache', error);
+                toast('Gagal mengekspor cache');
+            }
+        }
+
+        async function importCacheFile(file) {
+            if (!file) return;
+            try {
+                const payload = JSON.parse(await file.text());
+                if (
+                    !payload ||
+                    payload.app !== 'brave-mini-lyrics' ||
+                    !payload.data ||
+                    typeof payload.data !== 'object'
+                ) {
+                    toast('File backup tidak dikenali');
+                    return;
+                }
+
+                const data = {};
+                let count = 0;
+                for (const key of Object.keys(payload.data)) {
+                    if (key.indexOf('bml:v2:') !== 0) continue;
+                    const value = payload.data[key];
+                    if (!value || typeof value !== 'object') continue;
+                    data[key] = value;
+                    count += 1;
+                }
+                if (count === 0) {
+                    toast('Tidak ada data untuk diimpor');
+                    return;
+                }
+
+                await chrome.storage.local.set(data);
+                await loadSettings();
+                applyFontScale();
+                loadLyricsToPiP(null, null, { force: true });
+                toast(count + ' entri diimpor');
+            } catch (error) {
+                console.error('Brave Mini Lyrics: gagal mengimpor cache', error);
+                toast('File backup tidak valid');
             }
         }
 
@@ -1273,6 +1472,20 @@ if (window === window.top) {
             return results;
         }
 
+        // Baris tanpa kanji bisa diubah dengan tabel kana lokal, tanpa memuat
+        // kamus Kuromoji 17 MB. Kamus hanya dipakai kalau ada kanji.
+        async function romanizeJapaneseSmart(lines) {
+            const needsDictionary = !Kana || lines.some((line) => Kana.hasKanji(line));
+            if (!needsDictionary) {
+                return lines.map((line) => {
+                    if (!line.trim() || line.trim() === '♪') return line;
+                    return cleanupRomaji(Kana.romanize(line));
+                });
+            }
+            const instance = await getKuroshiro();
+            return romanizeJapanese(instance, lines);
+        }
+
         function sendRomanize(text) {
             return new Promise((resolve) => {
                 try {
@@ -1407,8 +1620,7 @@ if (window === window.top) {
                 let converted;
 
                 if (script === 'ja') {
-                    const instance = await getKuroshiro();
-                    converted = await romanizeJapanese(instance, latinState.original);
+                    converted = await romanizeJapaneseSmart(latinState.original);
                 } else {
                     converted = await romanizeWithGoogle(latinState.original);
                 }
@@ -1935,6 +2147,9 @@ if (window === window.top) {
             });
 
             win.addEventListener('pagehide', () => {
+                savePipBounds(true);
+                clearTimeout(pipBoundsSaveTimer);
+                pipBoundsSaveTimer = null;
                 stopVideoWatcher();
                 unbindVideoEvents();
                 if (activeAbort) activeAbort.abort();
@@ -1951,17 +2166,74 @@ if (window === window.top) {
                 tapState = null;
             });
 
+            win.addEventListener('resize', () => {
+                clearTimeout(pipBoundsSaveTimer);
+                pipBoundsSaveTimer = setTimeout(() => {
+                    pipBoundsSaveTimer = null;
+                    savePipBounds(false);
+                }, 500);
+            });
+
             applyFontScale();
+        }
+
+        function openFallbackWindow(width, height) {
+            try {
+                return window.open(
+                    '',
+                    'bml-lyrics-window',
+                    'popup=yes,width=' + width + ',height=' + height
+                );
+            } catch (error) {
+                return null;
+            }
+        }
+
+        function clampBounds(bounds) {
+            if (!bounds) return null;
+            const maxWidth = Math.max(260, window.screen.availWidth - 40);
+            const maxHeight = Math.max(260, window.screen.availHeight - 40);
+            return {
+                width: Math.min(maxWidth, Math.max(260, bounds.width)),
+                height: Math.min(maxHeight, Math.max(260, bounds.height)),
+                left: Math.min(Math.max(0, bounds.left), Math.max(0, window.screen.availWidth - 120)),
+                top: Math.min(Math.max(0, bounds.top), Math.max(0, window.screen.availHeight - 120))
+            };
+        }
+
+        async function bootLyricsWindow(win, savedBounds) {
+            pipWindow = win;
+            try {
+                await setupPipDocument(win);
+                await loadSettings();
+                applyFontScale();
+                await migrateLegacyStorage();
+
+                if (savedBounds) {
+                    try {
+                        win.moveTo(savedBounds.left, savedBounds.top);
+                    } catch (error) {
+                        // browser bisa menolak memindahkan jendela
+                    }
+                }
+
+                await loadLyricsToPiP(null);
+                startVideoWatcher();
+            } catch (error) {
+                console.error('Brave Mini Lyrics: gagal menyiapkan jendela lirik', error);
+                if (pipWindow === win) pipWindow = null;
+                try {
+                    win.close();
+                } catch (closeError) {
+                    // abaikan
+                }
+                pageToast('Gagal memuat jendela lirik.');
+            }
         }
 
         function toggleLyricsPiP() {
             if (pipWindow) {
                 pipWindow.close();
-                return;
-            }
-
-            if (!('documentPictureInPicture' in window)) {
-                pageToast('Browser ini belum mendukung Document Picture-in-Picture (butuh Chromium 116+).');
                 return;
             }
 
@@ -1971,45 +2243,46 @@ if (window === window.top) {
                 return;
             }
 
-            let request;
-            try {
-                // requestWindow harus dipanggil sinkron saat user activation masih aktif.
-                request = window.documentPictureInPicture.requestWindow({
-                    width: 360,
-                    height: 560
-                });
-            } catch (error) {
-                console.error('Brave Mini Lyrics: gagal membuka PiP', error);
-                pageToast('Gagal membuka jendela lirik.');
+            const savedBounds = clampBounds(settings.pipBounds);
+            const width = savedBounds ? savedBounds.width : 360;
+            const height = savedBounds ? savedBounds.height : 560;
+
+            if ('documentPictureInPicture' in window) {
+                let request;
+                try {
+                    // requestWindow harus dipanggil sinkron saat user activation masih aktif.
+                    request = window.documentPictureInPicture.requestWindow({
+                        width: width,
+                        height: height
+                    });
+                } catch (error) {
+                    console.error('Brave Mini Lyrics: gagal membuka PiP', error);
+                    pageToast('Gagal membuka jendela lirik.');
+                    return;
+                }
+
+                request
+                    .then((win) => bootLyricsWindow(win, savedBounds))
+                    .catch((error) => {
+                        console.error('Brave Mini Lyrics: gagal membuka PiP', error);
+                        pipWindow = null;
+                        pageToast('Gagal membuka jendela lirik.');
+                    });
                 return;
             }
 
-            request
-                .then(async (win) => {
-                    pipWindow = win;
-                    try {
-                        await setupPipDocument(win);
-                        await loadSettings();
-                        applyFontScale();
-                        await migrateLegacyStorage();
-                        await loadLyricsToPiP(null);
-                        startVideoWatcher();
-                    } catch (error) {
-                        console.error('Brave Mini Lyrics: gagal menyiapkan PiP', error);
-                        if (pipWindow === win) pipWindow = null;
-                        try {
-                            win.close();
-                        } catch (closeError) {
-                            // abaikan
-                        }
-                        pageToast('Gagal memuat jendela lirik.');
-                    }
-                })
-                .catch((error) => {
-                    console.error('Brave Mini Lyrics: gagal membuka PiP', error);
-                    pipWindow = null;
-                    pageToast('Gagal membuka jendela lirik.');
-                });
+            // Fallback untuk browser tanpa Document PiP: jendela popup biasa.
+            const win = openFallbackWindow(width, height);
+            if (!win) {
+                pageToast('Popup diblokir browser. Izinkan popup untuk YouTube lalu coba lagi.');
+                return;
+            }
+            try {
+                win.resizeTo(width, height);
+            } catch (error) {
+                // abaikan
+            }
+            bootLyricsWindow(win, savedBounds);
         }
 
         // ==========================================
@@ -2093,7 +2366,10 @@ if (window === window.top) {
 
         function startVideoWatcher() {
             stopVideoWatcher();
-            videoWatchTimer = setInterval(checkVideoChange, 1500);
+            videoWatchTimer = setInterval(() => {
+                checkVideoChange();
+                savePipBounds(false);
+            }, 1500);
         }
 
         function stopVideoWatcher() {
@@ -2107,6 +2383,8 @@ if (window === window.top) {
             document.addEventListener(name, checkVideoChange);
         });
         window.addEventListener('popstate', checkVideoChange);
+
+        loadSettings();
 
         console.log('Brave Mini Lyrics: content script siap.');
     }

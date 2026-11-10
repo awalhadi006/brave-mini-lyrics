@@ -23,12 +23,17 @@ atas jendela lain saat kamu berpindah aplikasi.
 - **Buat lirik dari nol** dan ubah lirik statis menjadi sinkron dengan
   **Tap Sinkron** (tekan TAP tiap baris, lengkap dengan undo).
 - **Romanisasi Jepang offline** (Kuroshiro + Kuromoji), toggle 🔤.
+- **Fast-path kana**: baris tanpa kanji diromanisasi instan tanpa memuat kamus
+  17 MB; kamus hanya dimuat kalau baris mengandung kanji.
 - **Romanisasi Korea/China** lewat Google Translate, dengan cache per video.
 - **Mode Latin persisten** — lirik non-Latin berikutnya otomatis diromanisasi.
 - **Kontrol pemutar** play/pause, video sebelumnya/berikutnya.
 - **Font lirik bisa diperbesar/diperkecil** dan tersimpan permanen.
+- **Tema terang/gelap** dan **slider opasitas latar** yang tersimpan.
+- **Posisi & ukuran jendela PiP diingat** dan dipulihkan saat dibuka lagi.
+- **Ekspor / impor cache lirik** (JSON) untuk backup lirik manual dan offset.
+- **Fallback popup window** kalau browser tidak mendukung Document PiP.
 - **Shortcut keyboard** (lihat di bawah).
-- **Tema gelap** yang menyatu dengan jendela PiP.
 
 ## Instalasi (Brave / Chrome / Edge)
 
@@ -64,6 +69,9 @@ atas jendela lain saat kamu berpindah aplikasi.
 | 🔍 | Cari lirik manual (`Judul Lagu - Nama Artis`) |
 | ↻ | Paksa cari ulang, melewati cache |
 | ⛶ | Perbesar jendela |
+| 🌙 / ☀ | Ganti tema gelap / terang |
+| Slider **Latar** | Atur opasitas latar menu (30–100%) |
+| ⬇ Ekspor / ⬆ Impor | Backup atau pulihkan cache lirik (JSON) |
 | `Space` | Play / pause |
 | `←` / `→` | Geser offset `-0.1s` / `+0.1s` |
 | `+` / `-` | Perbesar / perkecil font |
@@ -101,7 +109,7 @@ background service worker
 ## Pengembangan
 
 ```bash
-npm test        # unit test untuk parser LRC dan skor kecocokan
+npm test        # unit test untuk parser LRC, skor kecocokan, dan kana
 npm run check   # syntax check file JS
 node scripts/make-icons.js   # regenerate icon PNG
 ```
@@ -115,11 +123,13 @@ Struktur:
 ├── content.js             # logika utama + render PiP
 ├── pip.css                # style jendela PiP
 ├── lib/lrc.js             # parser LRC, skor kecocokan, escape HTML
+├── lib/kana.js            # fast-path romaji kana (tanpa kamus)
 ├── dict/                  # kamus Kuromoji (romanisasi Jepang)
 ├── kuroshiro*.js          # library romanisasi
 ├── icons/                 # icon ekstensi (hasil generator)
 ├── scripts/make-icons.js  # generator icon tanpa dependency
 ├── tests/                 # unit test (node:test)
+├── .github/workflows/     # CI: test, check, zip rilis
 └── docs/roadmap.md        # rencana fitur per batch
 ```
 
@@ -131,13 +141,15 @@ refresh halaman YouTube.
 | Masalah | Solusi |
 |---|---|
 | Jendela lirik tidak muncul | Pastikan Brave/Chrome versi 116+ dan ada video yang sedang diputar |
+| Muncul popup biasa, bukan PiP | Browser tidak mendukung Document PiP; popup tetap berfungsi, izinkan popup untuk YouTube |
+| Posisi jendela tidak kembali | Pindahkan/resize jendela, tutup, lalu buka lagi; posisi disimpan otomatis |
 | Lirik tidak ditemukan | Gunakan 🔍 lalu ketik `Judul Lagu - Nama Artis` |
 | Lirik tidak sinkron | Gunakan `-0.1s` / `+0.1s` atau klik kanan pada baris yang benar |
 | Lirik salah versi | Klik 🔍 dan pilih versi lain, atau ↻ untuk cari ulang |
 | Lirik salah ketik / ada bagian yang mau dihapus | Klik ✎, perbaiki, lalu **Simpan**. **Hapus manual** mengembalikan hasil otomatis |
 | Lirik statis belum sinkron | Klik ✎ → **🎯 Tap Sinkron**, putar lagu, tekan TAP tepat di awal tiap baris |
 | Lagu Korea/China tidak ditemukan | Cari manual dengan judul aslinya (mis. `周杰伦 晴天`); NetEase/QQ ikut dicari otomatis |
-| Tombol 🔤 lama saat pertama klik | Normal, kamus 17 MB sedang dimuat (sekali saja) |
+| Tombol 🔤 lama saat pertama klik | Normal jika lagu mengandung kanji; kamus 17 MB sedang dimuat (sekali saja) |
 
 ## Roadmap
 
