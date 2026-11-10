@@ -319,7 +319,7 @@ if (window === window.top) {
             }
 
             if (artist) {
-                title = title.replace(new RegExp(Core.escapeRegExp(artist), 'gi'), ' ');
+                title = Core.stripArtistFromTitle(title, artist);
             }
 
             title = title.replace(/\s+/g, ' ').trim();

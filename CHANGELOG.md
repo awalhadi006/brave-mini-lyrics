@@ -4,6 +4,16 @@ Semua perubahan penting pada proyek ini didokumentasikan di file ini.
 Format mengikuti [Keep a Changelog](https://keepachangelog.com/id-ID/1.1.0/),
 dan versi mengikuti [Semantic Versioning](https://semver.org/lang/id/).
 
+## [1.3.1] - 2026-11-10
+
+### Diperbaiki
+- Judul video tidak lagi rusak saat nama channel sangat pendek. Sebelumnya nama
+  artis dihapus dari judul dengan pencarian global tanpa batas kata, sehingga
+  channel bernama **D** mengubah judul **Dear God** menjadi **ear Go** dan
+  pencarian lirik memakai kata kunci yang salah.
+- Nama artis sekarang hanya dihapus sebagai kata utuh, dan nama artis yang
+  kurang dari 3 karakter diabaikan agar tidak memotong huruf di dalam judul.
+
 ## [1.3.0] - 2026-11-10
 
 ### Ditambahkan

@@ -131,3 +131,22 @@ test('hashText: stabil dan berbeda untuk teks berbeda', () => {
     assert.notEqual(Core.hashText('abc'), Core.hashText('abd'));
     assert.equal(Core.hashText(null), Core.hashText(''));
 });
+
+test('stripArtistFromTitle: nama artis pendek tidak merusak judul', () => {
+    assert.equal(Core.stripArtistFromTitle('Dear God', 'D'), 'Dear God');
+});
+
+test('stripArtistFromTitle: artis di awal atau akhir judul', () => {
+    assert.equal(Core.stripArtistFromTitle('Avenged Sevenfold - Dear God', 'Avenged Sevenfold'), 'Dear God');
+    assert.equal(Core.stripArtistFromTitle('Dear God - Avenged Sevenfold', 'Avenged Sevenfold'), 'Dear God');
+    assert.equal(Core.stripArtistFromTitle('Avenged Sevenfold: Dear God', 'Avenged Sevenfold'), 'Dear God');
+});
+
+test('stripArtistFromTitle: hanya kata utuh, bukan potongan kata', () => {
+    assert.equal(Core.stripArtistFromTitle('Queens of the Stone Age', 'Queen'), 'Queens of the Stone Age');
+    assert.equal(Core.stripArtistFromTitle('Shape of You', 'Ed Sheeran'), 'Shape of You');
+});
+
+test('stripArtistFromTitle: judul sama dengan artis tidak dikosongkan', () => {
+    assert.equal(Core.stripArtistFromTitle('Queen', 'Queen'), 'Queen');
+});
