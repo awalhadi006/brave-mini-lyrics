@@ -120,3 +120,14 @@ test('formatTime', () => {
     assert.equal(Core.formatTime(0), '');
     assert.equal(Core.formatTime(NaN), '');
 });
+
+test('toLrcTimestamp: dua digit desimal dan menit', () => {
+    assert.equal(Core.toLrcTimestamp(0), '[00:00.00]');
+    assert.equal(Core.toLrcTimestamp(65.4), '[01:05.40]');
+});
+
+test('hashText: stabil dan berbeda untuk teks berbeda', () => {
+    assert.equal(Core.hashText('abc'), Core.hashText('abc'));
+    assert.notEqual(Core.hashText('abc'), Core.hashText('abd'));
+    assert.equal(Core.hashText(null), Core.hashText(''));
+});

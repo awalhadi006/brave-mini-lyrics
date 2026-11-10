@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Brave Mini Lyrics (PiP)",
-  "version": "1.1.1",
+  "version": "1.2.0",
   "minimum_chrome_version": "116",
   "description": "Menampilkan lirik melayang tersinkronisasi untuk video musik YouTube menggunakan Document PiP.",
   "icons": {
@@ -23,11 +23,14 @@
     "service_worker": "background.js"
   },
   "permissions": [
-    "storage"
+    "storage",
+    "declarativeNetRequest"
   ],
   "host_permissions": [
     "https://lrclib.net/*",
-    "https://translate.googleapis.com/*"
+    "https://translate.googleapis.com/*",
+    "https://music.163.com/*",
+    "https://c.y.qq.com/*"
   ],
   "content_scripts": [
     {

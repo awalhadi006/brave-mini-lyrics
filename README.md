@@ -4,8 +4,9 @@ Ekstensi browser Chromium (Brave/Chrome/Edge) yang menampilkan **lirik melayang
 tersinkronisasi** untuk video musik YouTube menggunakan
 [Document Picture-in-Picture](https://developer.chrome.com/docs/web-platform/document-picture-in-picture).
 
-Lirik diambil dari [lrclib.net](https://lrclib.net), disimpan secara lokal, dan
-tetap terlihat di atas jendela lain saat kamu berpindah aplikasi.
+Lirik diambil dari [lrclib.net](https://lrclib.net) dan sumber tambahan
+(NetEase Cloud Music, QQ Music), disimpan secara lokal, dan tetap terlihat di
+atas jendela lain saat kamu berpindah aplikasi.
 
 ## Fitur
 
@@ -13,8 +14,16 @@ tetap terlihat di atas jendela lain saat kamu berpindah aplikasi.
 - **Mode karaoke/ringkas** — hanya satu baris lirik besar di tengah.
 - **Kalibrasi offset** `±0.1s` dan kalibrasi instan dengan klik kanan pada baris.
 - **Pencarian otomatis & manual** dengan pencocokan judul, artis, dan durasi.
+- **Sumber lirik tambahan** NetEase Cloud Music dan QQ Music, dipakai otomatis
+  saat lrclib tidak yakin dan pada pencarian manual.
+- **Progress pencarian** dengan sumber yang sedang dicari dan tombol ⏹ Hentikan.
 - **Cache per video** — lirik yang sudah ditemukan tidak dicari ulang.
+- **Edit lirik manual** (✎): perbaiki typo, hapus bagian, atau tempel LRC sendiri.
+- **Buat lirik dari nol** dan ubah lirik statis menjadi sinkron dengan
+  **Tap Sinkron** (tekan TAP tiap baris, lengkap dengan undo).
 - **Romanisasi Jepang offline** (Kuroshiro + Kuromoji), toggle 🔤.
+- **Romanisasi Korea/China** lewat Google Translate, dengan cache per video.
+- **Mode Latin persisten** — lirik non-Latin berikutnya otomatis diromanisasi.
 - **Kontrol pemutar** play/pause, video sebelumnya/berikutnya.
 - **Font lirik bisa diperbesar/diperkecil** dan tersimpan permanen.
 - **Shortcut keyboard** (lihat di bawah).
@@ -47,7 +56,10 @@ tetap terlihat di atas jendela lain saat kamu berpindah aplikasi.
 | Klik kanan baris lirik | Kalibrasi offset instan |
 | `-0.1s` / `+0.1s` | Geser sinkronisasi lirik |
 | 🎤 | Mode karaoke (satu baris besar) |
-| 🔤 | Ubah lirik Jepang ke huruf Latin |
+| 🔤 | Ubah lirik Jepang/Korea/China ke huruf Latin |
+| ✎ | Edit lirik, tempel LRC sendiri, atau buat dari nol |
+| 🎯 Tap Sinkron | Ubah lirik statis jadi LRC dengan menekan TAP tiap baris |
+| ⏹ Hentikan | Stop pencarian yang sedang berjalan |
 | 🔍 | Cari lirik manual (`Judul Lagu - Nama Artis`) |
 | ↻ | Paksa cari ulang, melewati cache |
 | ⛶ | Perbesar jendela |
@@ -62,21 +74,27 @@ tetap terlihat di atas jendela lain saat kamu berpindah aplikasi.
 YouTube page (content script)
 ├── ambil metadata video (judul, artis, durasi)
 ├── cari lirik ke lrclib.net (search + get, dengan skor kecocokan)
+├── fallback ke NetEase / QQ Music lewat service worker
 ├── simpan ke chrome.storage.local (per videoId)
 ├── parse LRC -> daftar {time, text}
 ├── ikuti timeupdate video -> highlight baris aktif
+├── editor lirik manual + tap-sync (tersimpan per video)
 └── render ke jendela Document PiP (HTML + CSS sendiri)
 
 background service worker
-└── (disiapkan) romanisasi Korea/China via Google Translate
+├── adapter NetEase Cloud Music & QQ Music (menghindari CORS)
+├── aturan declarativeNetRequest untuk header Referer QQ Music
+└── romanisasi Korea/China via Google Translate
 ```
 
 ## Privasi
 
 - Tidak ada server milik pengembang dan tidak ada analytics.
-- Data lirik, offset, dan pengaturan disimpan **lokal** di `chrome.storage.local`.
-- Hanya dua tujuan jaringan: `lrclib.net` (lirik) dan
-  `translate.googleapis.com` (romanisasi, akan aktif di v1.2.0).
+- Data lirik, offset, lirik manual, cache romanisasi, dan pengaturan disimpan
+  **lokal** di `chrome.storage.local`.
+- Tujuan jaringan hanya `lrclib.net`, `translate.googleapis.com`,
+  `music.163.com` (NetEase), dan `c.y.qq.com` (QQ Music) — semuanya untuk
+  mengambil lirik atau romanisasi.
 - Tidak ada token, akun, atau data pribadi yang dikirim.
 
 ## Pengembangan
@@ -115,6 +133,9 @@ refresh halaman YouTube.
 | Lirik tidak ditemukan | Gunakan 🔍 lalu ketik `Judul Lagu - Nama Artis` |
 | Lirik tidak sinkron | Gunakan `-0.1s` / `+0.1s` atau klik kanan pada baris yang benar |
 | Lirik salah versi | Klik 🔍 dan pilih versi lain, atau ↻ untuk cari ulang |
+| Lirik salah ketik / ada bagian yang mau dihapus | Klik ✎, perbaiki, lalu **Simpan**. **Hapus manual** mengembalikan hasil otomatis |
+| Lirik statis belum sinkron | Klik ✎ → **🎯 Tap Sinkron**, putar lagu, tekan TAP tepat di awal tiap baris |
+| Lagu Korea/China tidak ditemukan | Cari manual dengan judul aslinya (mis. `周杰伦 晴天`); NetEase/QQ ikut dicari otomatis |
 | Tombol 🔤 lama saat pertama klik | Normal, kamus 17 MB sedang dimuat (sekali saja) |
 
 ## Roadmap

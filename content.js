@@ -29,7 +29,7 @@ if (window === window.top) {
         let currentHighlightIndex = -1;
         let isSyncedLyrics = false;
         let lyricsTimeOffset = 0;
-        let settings = { fontScale: 1 };
+        let settings = { fontScale: 1, latinMode: false };
         let menuOpen = false;
         let menuArmed = false;
         let menuHoverTimer = null;
@@ -40,10 +40,13 @@ if (window === window.top) {
         let pageToastTimer = null;
         let loadToken = 0;
         let activeAbort = null;
+        let searchStopRequested = false;
+        let currentVideoData = { offset: 0, manualData: null, autoData: null, autoCachedAt: 0 };
         let lastLoadedVideoId = null;
         let rafId = null;
         let boundVideoElement = null;
         let latinState = createLatinState();
+        let tapState = null;
 
         const kuroshiroPromise = { current: null };
 
@@ -53,7 +56,7 @@ if (window === window.top) {
         const escapeHtml = Core.escapeHtml;
 
         function createLatinState() {
-            return { original: [], latin: [], mode: false, done: false, busy: false };
+            return { original: [], latin: [], mode: false, done: false, busy: false, key: null };
         }
 
         function byId(id) {
@@ -85,7 +88,13 @@ if (window === window.top) {
         // PENYIMPANAN (chrome.storage.local)
         // ==========================================
         async function getVideoData(videoId) {
-            const defaults = { offset: 0, manualData: null, autoData: null, autoCachedAt: 0 };
+            const defaults = {
+                offset: 0,
+                manualData: null,
+                autoData: null,
+                autoCachedAt: 0,
+                latinData: null
+            };
             if (!videoId) return defaults;
             try {
                 const key = STORAGE_PREFIX + videoId;
@@ -103,12 +112,19 @@ if (window === window.top) {
                 const key = STORAGE_PREFIX + videoId;
                 const obj = await chrome.storage.local.get(key);
                 const data = Object.assign(
-                    { offset: 0, manualData: null, autoData: null, autoCachedAt: 0 },
+                    {
+                        offset: 0,
+                        manualData: null,
+                        autoData: null,
+                        autoCachedAt: 0,
+                        latinData: null
+                    },
                     obj[key] || {},
                     patch,
                     { lastUpdated: Date.now() }
                 );
                 await chrome.storage.local.set({ [key]: data });
+                if (videoId === getVideoId()) currentVideoData = data;
                 await touchIndex(videoId);
             } catch (error) {
                 console.warn('Brave Mini Lyrics: gagal menyimpan storage', error);
@@ -138,10 +154,11 @@ if (window === window.top) {
         async function loadSettings() {
             try {
                 const obj = await chrome.storage.local.get(SETTINGS_KEY);
-                settings = Object.assign({ fontScale: 1 }, obj[SETTINGS_KEY] || {});
+                settings = Object.assign({ fontScale: 1, latinMode: false }, obj[SETTINGS_KEY] || {});
                 settings.fontScale = Math.min(1.8, Math.max(0.7, Number(settings.fontScale) || 1));
+                settings.latinMode = Boolean(settings.latinMode);
             } catch (error) {
-                settings = { fontScale: 1 };
+                settings = { fontScale: 1, latinMode: false };
             }
         }
 
@@ -323,6 +340,7 @@ if (window === window.top) {
             const unique = [];
             for (const track of tracks) {
                 const key = [
+                    track.source || 'lrclib',
                     track.id || '',
                     track.trackName || '',
                     track.artistName || '',
@@ -335,7 +353,38 @@ if (window === window.top) {
             return unique;
         }
 
-        async function searchAuto(meta, signal) {
+        function fetchSource(source, payload) {
+            return new Promise((resolve) => {
+                let settled = false;
+                const finish = (value) => {
+                    if (settled) return;
+                    settled = true;
+                    resolve(value);
+                };
+                const timer = setTimeout(() => finish([]), SEARCH_TIMEOUT_MS);
+                try {
+                    chrome.runtime.sendMessage(
+                        { action: 'lyrics_source', source: source, payload: payload },
+                        (response) => {
+                            clearTimeout(timer);
+                            if (chrome.runtime.lastError || !response || !response.success) {
+                                finish([]);
+                                return;
+                            }
+                            finish(Array.isArray(response.tracks) ? response.tracks : []);
+                        }
+                    );
+                } catch (error) {
+                    clearTimeout(timer);
+                    finish([]);
+                }
+            });
+        }
+
+        async function searchAuto(meta, signal, onProgress) {
+            const report = typeof onProgress === 'function' ? onProgress : function () {};
+
+            report('Mencoba pencocokan langsung…');
             const exact = await lrclibGet(meta, signal);
             if (exact) {
                 return { track: exact, score: 1, source: 'get' };
@@ -351,14 +400,34 @@ if (window === window.top) {
 
             let collected = [];
             for (const query of queries) {
+                report('Mencari di lrclib: ' + query);
                 const results = await lrclibSearch(query, signal);
                 collected = collected.concat(results);
                 if (collected.length >= 12) break;
             }
 
-            const best = Core.pickBestTrack(dedupeTracks(collected), meta);
+            let best = Core.pickBestTrack(dedupeTracks(collected), meta);
+
+            // Jika lrclib tidak yakin, coba sumber tambahan.
+            if (!best || best.score < 0.6) {
+                const fallbackQuery = queries[0] || meta.title;
+                if (fallbackQuery) {
+                    const sources = [
+                        { id: 'netease', label: 'NetEase' },
+                        { id: 'qq', label: 'QQ Music' }
+                    ];
+                    for (const source of sources) {
+                        report('Mencari di ' + source.label + '…');
+                        const tracks = await fetchSource(source.id, { query: fallbackQuery });
+                        if (tracks.length > 0) collected = collected.concat(tracks);
+                    }
+                    const extra = Core.pickBestTrack(dedupeTracks(collected), meta);
+                    if (extra && (!best || extra.score > best.score)) best = extra;
+                }
+            }
+
             if (!best) return null;
-            return { track: best.track, score: best.score, source: 'search' };
+            return { track: best.track, score: best.score, source: best.track.source || 'search' };
         }
 
         function parseManualQuery(query) {
@@ -374,7 +443,8 @@ if (window === window.top) {
             return { title: clean, artist: '', query: clean };
         }
 
-        async function searchManual(query, signal) {
+        async function searchManual(query, signal, onProgress) {
+            const report = typeof onProgress === 'function' ? onProgress : function () {};
             const parsed = parseManualQuery(query);
             const meta = { title: parsed.title, artist: parsed.artist, duration: 0 };
 
@@ -384,9 +454,20 @@ if (window === window.top) {
 
             let collected = [];
             for (const item of queries) {
+                report('Mencari di lrclib: ' + item);
                 const results = await lrclibSearch(item, signal);
                 collected = collected.concat(results);
                 if (collected.length >= 30) break;
+            }
+
+            const sources = [
+                { id: 'netease', label: 'NetEase' },
+                { id: 'qq', label: 'QQ Music' }
+            ];
+            for (const source of sources) {
+                report('Mencari di ' + source.label + '…');
+                const tracks = await fetchSource(source.id, { query: parsed.query });
+                if (tracks.length > 0) collected = collected.concat(tracks);
             }
 
             const unique = dedupeTracks(collected);
@@ -590,6 +671,7 @@ if (window === window.top) {
                     <button type="button" class="ctrl-btn" id="ctrl-prev" title="Video sebelumnya">⏮</button>
                     <button type="button" class="ctrl-btn" id="ctrl-pp" title="Play / pause">⏸</button>
                     <button type="button" class="ctrl-btn" id="ctrl-next" title="Video berikutnya">⏭</button>
+                    <button type="button" class="ctrl-btn" id="btn-edit" title="Edit / buat lirik">✎</button>
                 </div>
             `;
         }
@@ -756,6 +838,19 @@ if (window === window.top) {
             const btnMaximize = byId('btn-maximize');
             if (btnMaximize) btnMaximize.addEventListener('click', toggleMaximize);
 
+            const btnEdit = byId('btn-edit');
+            if (btnEdit) btnEdit.addEventListener('click', openEditor);
+
+            const btnStop = byId('btn-stop-search');
+            if (btnStop) {
+                btnStop.addEventListener('click', () => {
+                    searchStopRequested = true;
+                    loadToken += 1;
+                    if (activeAbort) activeAbort.abort();
+                    renderStopped(opts.fallbackSearchText || '');
+                });
+            }
+
             onPlayStateChange();
         }
 
@@ -809,7 +904,7 @@ if (window === window.top) {
         // ==========================================
         // RENDER STATE
         // ==========================================
-        function renderLoading(titleText, artistText, fallbackSearchText) {
+        function renderLoading(titleText, artistText, fallbackSearchText, statusText) {
             const body = pipWindow.document.body;
             body.classList.remove('results-mode', 'showing-results', 'search-active');
             body.classList.add('is-loading');
@@ -830,11 +925,52 @@ if (window === window.top) {
                     <p class="title">${escapeHtml(titleText)}</p>
                     <p class="artist">${escapeHtml(artistText)}</p>
                     ${playerControlsMarkup()}
+                    <div class="loading-controls">
+                        <button type="button" class="sync-btn" id="btn-stop-search" title="Hentikan pencarian">⏹ Hentikan</button>
+                    </div>
                     ${searchBoxMarkup(fallbackSearchText)}
                 </div>
             `;
-            container.innerHTML = '<p class="loading">Menghubungkan ke database lirik…</p>';
+            container.innerHTML = `<p class="loading" id="loading-status">${escapeHtml(
+                statusText || 'Menghubungkan ke database lirik…'
+            )}</p>`;
             bindHeaderEvents({ synced: false, fallbackSearchText: fallbackSearchText });
+        }
+
+        function updateLoadingStatus(message) {
+            const element = byId('loading-status');
+            if (element) element.textContent = message;
+        }
+
+        function renderStopped(fallbackSearchText) {
+            const body = pipWindow.document.body;
+            body.classList.remove('is-loading', 'results-mode', 'showing-results');
+            setMenuOpen(true);
+
+            const header = byId('header');
+            const container = byId('lyrics-container');
+            if (!header || !container) return;
+
+            isSyncedLyrics = false;
+            parsedLyrics = [];
+            lineElements = [];
+            currentHighlightIndex = -1;
+
+            header.innerHTML = `
+                <div class="header-inner">
+                    <p class="title">Pencarian dihentikan</p>
+                    <p class="artist">Kamu bisa cari manual atau buat lirik sendiri.</p>
+                    ${playerControlsMarkup()}
+                    ${searchBoxMarkup(fallbackSearchText)}
+                </div>
+            `;
+            container.innerHTML =
+                '<p class="loading">Pencarian dihentikan. Tekan 🔍 untuk mencari manual atau ✎ untuk membuat lirik sendiri.</p>';
+
+            bindHeaderEvents({ synced: false, fallbackSearchText: fallbackSearchText });
+            const searchBox = byId('search-box');
+            if (searchBox) searchBox.hidden = false;
+            applyFontScale();
         }
 
         function renderFound(data, fallbackSearchText, usedCache) {
@@ -923,6 +1059,7 @@ if (window === window.top) {
             bindHeaderEvents({ synced: synced, fallbackSearchText: fallbackSearchText });
             closeMenu();
             applyFontScale();
+            maybeAutoLatin();
         }
 
         function renderResults(results, manualQuery, meta) {
@@ -967,7 +1104,13 @@ if (window === window.top) {
                 const artist = pipWindow.document.createElement('div');
                 artist.className = 'sr-artist';
                 const duration = track.duration ? ' · ' + Core.formatTime(track.duration) : '';
-                artist.textContent = (track.artistName || 'Tanpa artis') + duration;
+                const sourceLabel =
+                    track.source === 'netease'
+                        ? ' · NetEase'
+                        : track.source === 'qq'
+                          ? ' · QQ Music'
+                          : '';
+                artist.textContent = (track.artistName || 'Tanpa artis') + duration + sourceLabel;
 
                 const badgeWrapper = pipWindow.document.createElement('div');
                 badgeWrapper.className = 'sr-badge';
@@ -1174,44 +1317,76 @@ if (window === window.top) {
             });
         }
 
-        async function toggleLatin() {
+        async function toggleLatin(options) {
+            const opts = options || {};
             if (!pipWindow || lineElements.length === 0) return;
             const button = byId('btn-latin');
-            if (!button) return;
 
             if (latinState.mode) {
                 applyTexts(latinState.original);
                 latinState.mode = false;
-                button.classList.remove('active-latin');
-                button.textContent = '🔤';
-                toast('Lirik asli');
+                if (button) {
+                    button.classList.remove('active-latin');
+                    button.textContent = '🔤';
+                }
+                saveSettings({ latinMode: false });
+                if (!opts.silent) toast('Lirik asli');
                 return;
             }
 
             if (latinState.done) {
                 applyTexts(latinState.latin);
                 latinState.mode = true;
-                button.classList.add('active-latin');
-                button.textContent = '✔';
+                if (button) {
+                    button.classList.add('active-latin');
+                    button.textContent = '✔';
+                }
+                saveSettings({ latinMode: true });
+                if (!opts.silent) toast('Huruf Latin');
                 return;
             }
 
             if (latinState.busy) return;
 
             latinState.busy = true;
-            button.disabled = true;
+            if (button) button.disabled = true;
             latinState.original = lineElements.map((element) => element.textContent);
+            const key = Core.hashText(latinState.original.join('\n'));
+            latinState.key = key;
+
+            // Gunakan hasil romanisasi yang pernah disimpan untuk video ini.
+            const cached = currentVideoData && currentVideoData.latinData;
+            if (
+                cached &&
+                cached.key === key &&
+                Array.isArray(cached.lines) &&
+                cached.lines.length === latinState.original.length
+            ) {
+                latinState.latin = cached.lines;
+                latinState.done = true;
+                latinState.mode = true;
+                applyTexts(cached.lines);
+                if (button) {
+                    button.classList.add('active-latin');
+                    button.textContent = '✔';
+                    button.disabled = false;
+                }
+                latinState.busy = false;
+                saveSettings({ latinMode: true });
+                if (!opts.silent) toast('Huruf Latin (cache)');
+                return;
+            }
 
             const script = Core.detectScript(latinState.original.join('\n'));
             if (script === 'latin' || script === 'unknown') {
                 latinState.busy = false;
-                button.disabled = false;
-                toast('Lirik sudah memakai huruf Latin');
+                if (button) button.disabled = false;
+                if (!opts.silent) toast('Lirik sudah memakai huruf Latin');
                 return;
             }
 
             try {
-                button.textContent = '⏳';
+                if (button) button.textContent = '⏳';
                 let converted;
 
                 if (script === 'ja') {
@@ -1225,8 +1400,8 @@ if (window === window.top) {
                     (line, index) => line && line !== latinState.original[index]
                 );
                 if (!changed) {
-                    toast('Romanisasi tidak tersedia untuk lirik ini');
-                    button.textContent = '🔤';
+                    if (!opts.silent) toast('Romanisasi tidak tersedia untuk lirik ini');
+                    if (button) button.textContent = '🔤';
                     return;
                 }
 
@@ -1234,19 +1409,252 @@ if (window === window.top) {
                 latinState.done = true;
                 latinState.mode = true;
                 applyTexts(converted);
-                button.classList.add('active-latin');
-                button.textContent = '✔';
+                if (button) {
+                    button.classList.add('active-latin');
+                    button.textContent = '✔';
+                }
+                saveSettings({ latinMode: true });
+
+                const videoId = getVideoId();
+                if (videoId) {
+                    saveVideoData(videoId, {
+                        latinData: { key: key, lines: converted }
+                    });
+                }
             } catch (error) {
                 console.error('Brave Mini Lyrics: romanisasi gagal', error);
-                toast('Gagal memuat kamus romanisasi');
-                button.textContent = '🔴';
-                setTimeout(() => {
-                    if (button) button.textContent = '🔤';
-                }, 1500);
+                if (!opts.silent) toast('Gagal memuat kamus romanisasi');
+                if (button) {
+                    button.textContent = '🔴';
+                    setTimeout(() => {
+                        if (button) button.textContent = '🔤';
+                    }, 1500);
+                }
             } finally {
                 latinState.busy = false;
-                button.disabled = false;
+                if (button) button.disabled = false;
             }
+        }
+
+        function maybeAutoLatin() {
+            if (!settings.latinMode) return;
+            if (!pipWindow || lineElements.length === 0) return;
+            if (latinState.mode || latinState.busy) return;
+            const script = Core.detectScript(lineElements.map((element) => element.textContent).join('\n'));
+            if (script === 'latin' || script === 'unknown') return;
+            toggleLatin({ silent: true });
+        }
+
+        // ==========================================
+        // EDITOR LIRIK & TAP SYNC
+        // ==========================================
+        function editorSeedText() {
+            if (isSyncedLyrics && parsedLyrics.length > 0) {
+                const texts =
+                    latinState.mode && latinState.original.length === parsedLyrics.length
+                        ? latinState.original
+                        : parsedLyrics.map((line) => line.text);
+                return parsedLyrics
+                    .map((line, index) => Core.toLrcTimestamp(line.time) + (texts[index] || ''))
+                    .join('\n');
+            }
+            if (lineElements.length > 0) {
+                return lineElements.map((element) => element.textContent).join('\n');
+            }
+            return '';
+        }
+
+        function closeEditor() {
+            if (!pipWindow) return;
+            const panel = pipWindow.document.getElementById('editor-panel');
+            if (panel) panel.remove();
+            tapState = null;
+        }
+
+        function openEditor() {
+            if (!pipWindow) return;
+            closeMenu();
+            closeEditor();
+
+            const doc = pipWindow.document;
+            const panel = doc.createElement('div');
+            panel.id = 'editor-panel';
+            panel.className = 'editor-panel';
+            panel.innerHTML = `
+                <div class="editor-head">
+                    <span>Edit Lirik</span>
+                    <button type="button" class="editor-close" id="editor-close" title="Tutup">✕</button>
+                </div>
+                <textarea id="editor-text" class="editor-text" spellcheck="false"
+                    placeholder="Tempel lirik LRC ([mm:ss.xx] teks) atau teks biasa…"></textarea>
+                <div class="tap-view" id="tap-view" hidden>
+                    <p class="tap-count" id="tap-count"></p>
+                    <p class="tap-line" id="tap-line"></p>
+                    <div class="tap-actions">
+                        <button type="button" class="sync-btn" id="tap-undo" title="Batalkan tap terakhir">↶</button>
+                        <button type="button" class="tap-hit" id="tap-hit">TAP</button>
+                        <button type="button" class="sync-btn" id="tap-finish">Selesai</button>
+                    </div>
+                    <p class="editor-hint">Putar lagu, lalu tekan TAP tepat saat baris di atas mulai dinyanyikan.</p>
+                </div>
+                <div class="editor-actions">
+                    <button type="button" class="sync-btn" id="editor-tap">🎯 Tap Sinkron</button>
+                    <button type="button" class="sync-btn" id="editor-reset">Hapus manual</button>
+                    <button type="button" class="sync-btn editor-save" id="editor-save">Simpan</button>
+                </div>
+                <p class="editor-hint">Format LRC: <code>[01:23.45]Teks lirik</code>. Tanpa timestamp akan disimpan sebagai lirik statis.</p>
+            `;
+            doc.body.appendChild(panel);
+
+            const textarea = doc.getElementById('editor-text');
+            if (textarea) textarea.value = editorSeedText();
+
+            const bind = (id, handler) => {
+                const element = doc.getElementById(id);
+                if (element) element.addEventListener('click', handler);
+            };
+
+            bind('editor-close', closeEditor);
+            bind('editor-save', saveEditor);
+            bind('editor-reset', resetManualLyrics);
+            bind('editor-tap', startTapSync);
+            bind('tap-hit', hitTap);
+            bind('tap-undo', undoTap);
+            bind('tap-finish', finishTapSync);
+
+            if (textarea) textarea.focus();
+        }
+
+        async function saveEditor() {
+            if (!pipWindow) return;
+            const textarea = pipWindow.document.getElementById('editor-text');
+            if (!textarea) return;
+            const text = textarea.value.replace(/\r\n?/g, '\n').trim();
+            if (!text) {
+                toast('Lirik masih kosong');
+                return;
+            }
+
+            const meta = getVideoMetadata();
+            const videoId = getVideoId();
+            const synced = /\[\d{1,3}:[0-5]?\d(?:[.:]\d{1,3})?\]/.test(text);
+            const manualData = {
+                id: 'manual:' + (videoId || 'local'),
+                trackName: meta.title || 'Lirik manual',
+                artistName: meta.artist || '',
+                duration: meta.duration || 0,
+                syncedLyrics: synced ? text : null,
+                plainLyrics: synced ? null : text,
+                source: 'manual'
+            };
+
+            currentVideoData = Object.assign({}, currentVideoData, {
+                manualData: manualData,
+                latinData: null
+            });
+            if (videoId) {
+                await saveVideoData(videoId, { manualData: manualData, latinData: null });
+            }
+            closeEditor();
+            loadLyricsToPiP(null, manualData);
+            toast(synced ? 'Lirik sinkron disimpan' : 'Lirik statis disimpan');
+        }
+
+        async function resetManualLyrics() {
+            if (!pipWindow) return;
+            if (!currentVideoData || !currentVideoData.manualData) {
+                toast('Tidak ada lirik manual');
+                return;
+            }
+            const videoId = getVideoId();
+            currentVideoData = Object.assign({}, currentVideoData, {
+                manualData: null,
+                latinData: null
+            });
+            if (videoId) {
+                await saveVideoData(videoId, { manualData: null, latinData: null });
+            }
+            closeEditor();
+            loadLyricsToPiP(null, null, { force: true });
+            toast('Lirik manual dihapus');
+        }
+
+        function startTapSync() {
+            if (!pipWindow) return;
+            const doc = pipWindow.document;
+            const textarea = doc.getElementById('editor-text');
+            if (!textarea) return;
+
+            const lines = textarea.value
+                .replace(/\r\n?/g, '\n')
+                .split('\n')
+                .map((line) =>
+                    line
+                        .replace(/\[\d{1,3}:[0-5]?\d(?:[.:]\d{1,3})?\]/g, '')
+                        .replace(/<[^>]*>/g, '')
+                        .trim()
+                )
+                .filter((line) => line.length > 0);
+
+            if (lines.length === 0) {
+                toast('Tidak ada baris untuk disinkronkan');
+                return;
+            }
+
+            tapState = { lines: lines, index: 0, times: [] };
+            textarea.hidden = true;
+            const view = doc.getElementById('tap-view');
+            if (view) view.hidden = false;
+
+            if (videoElement && videoElement.paused) {
+                const played = videoElement.play();
+                if (played && typeof played.catch === 'function') played.catch(() => {});
+            }
+            renderTapState();
+        }
+
+        function renderTapState() {
+            if (!pipWindow || !tapState) return;
+            const doc = pipWindow.document;
+            if (tapState.index >= tapState.lines.length) {
+                finishTapSync();
+                return;
+            }
+            const count = doc.getElementById('tap-count');
+            const lineElement = doc.getElementById('tap-line');
+            if (count) count.textContent = 'Baris ' + (tapState.index + 1) + ' / ' + tapState.lines.length;
+            if (lineElement) lineElement.textContent = tapState.lines[tapState.index];
+        }
+
+        function hitTap() {
+            if (!tapState || !videoElement) return;
+            tapState.times[tapState.index] = videoElement.currentTime;
+            tapState.index += 1;
+            renderTapState();
+        }
+
+        function undoTap() {
+            if (!tapState || tapState.index === 0) return;
+            tapState.index -= 1;
+            tapState.times.length = tapState.index;
+            renderTapState();
+        }
+
+        function finishTapSync() {
+            if (!pipWindow || !tapState) return;
+            const doc = pipWindow.document;
+            const textarea = doc.getElementById('editor-text');
+            const lrc = tapState.lines
+                .map((line, index) => Core.toLrcTimestamp(tapState.times[index] || 0) + line)
+                .join('\n');
+            if (textarea) {
+                textarea.value = lrc;
+                textarea.hidden = false;
+            }
+            const view = doc.getElementById('tap-view');
+            if (view) view.hidden = true;
+            tapState = null;
+            toast('Tap sinkron selesai. Tekan Simpan.');
         }
 
         // ==========================================
@@ -1263,6 +1671,7 @@ if (window === window.top) {
 
             const opts = options || {};
             const token = ++loadToken;
+            searchStopRequested = false;
 
             if (activeAbort) activeAbort.abort();
             const controller = new AbortController();
@@ -1277,12 +1686,23 @@ if (window === window.top) {
                 manualQuery ||
                 (meta.title ? meta.title + (meta.artist ? ' - ' + meta.artist : '') : meta.artist || '');
 
-            let saved = { offset: 0, manualData: null, autoData: null, autoCachedAt: 0 };
+            let saved = {
+                offset: 0,
+                manualData: null,
+                autoData: null,
+                autoCachedAt: 0,
+                latinData: null
+            };
             if (videoId) saved = await getVideoData(videoId);
             if (token !== loadToken) {
                 clearTimeout(timeoutId);
                 return;
             }
+            currentVideoData = saved;
+
+            const report = (message) => {
+                if (token === loadToken) updateLoadingStatus(message);
+            };
 
             lyricsTimeOffset = Number(saved.offset) || 0;
 
@@ -1299,15 +1719,21 @@ if (window === window.top) {
             }
 
             if (manualQuery) {
-                renderLoading('Mencari manual…', manualQuery, manualQuery);
+                renderLoading('Mencari manual…', manualQuery, manualQuery, 'Menyiapkan pencarian…');
             } else if (sourceData) {
                 renderLoading(
                     usedCache ? 'Memuat lirik tersimpan…' : 'Memuat lirik…',
                     sourceData.trackName || meta.title,
-                    fallbackSearchText
+                    fallbackSearchText,
+                    'Memuat lirik…'
                 );
             } else {
-                renderLoading('Mencari lirik…', meta.artist + ' • ' + meta.title, fallbackSearchText);
+                renderLoading(
+                    'Mencari lirik…',
+                    meta.artist + ' • ' + meta.title,
+                    fallbackSearchText,
+                    'Menghubungkan ke database lirik…'
+                );
             }
 
             try {
@@ -1326,9 +1752,11 @@ if (window === window.top) {
                 }
 
                 if (manualQuery) {
-                    const results = await searchManual(manualQuery, controller.signal);
+                    const results = await searchManual(manualQuery, controller.signal, report);
                     if (token !== loadToken) return;
-                    if (results.length > 0) {
+                    if (searchStopRequested) {
+                        renderStopped(fallbackSearchText);
+                    } else if (results.length > 0) {
                         renderResults(results, manualQuery, meta);
                     } else {
                         renderNotFound(fallbackSearchText);
@@ -1336,8 +1764,12 @@ if (window === window.top) {
                     return;
                 }
 
-                const found = await searchAuto(meta, controller.signal);
+                const found = await searchAuto(meta, controller.signal, report);
                 if (token !== loadToken) return;
+                if (searchStopRequested) {
+                    renderStopped(fallbackSearchText);
+                    return;
+                }
 
                 if (!found) {
                     renderNotFound(fallbackSearchText);
@@ -1369,7 +1801,8 @@ if (window === window.top) {
             } catch (error) {
                 if (error && error.name === 'AbortError') {
                     if (token === loadToken) {
-                        renderNotFound(fallbackSearchText);
+                        if (searchStopRequested) renderStopped(fallbackSearchText);
+                        else renderNotFound(fallbackSearchText);
                     }
                     return;
                 }
@@ -1450,6 +1883,12 @@ if (window === window.top) {
             );
 
             document_.addEventListener('keydown', (event) => {
+                if (event.key === 'Escape' && document_.getElementById('editor-panel')) {
+                    event.preventDefault();
+                    closeEditor();
+                    return;
+                }
+
                 const tag = event.target && event.target.tagName;
                 if (tag === 'INPUT' || tag === 'TEXTAREA') return;
 
@@ -1489,6 +1928,7 @@ if (window === window.top) {
                 currentHighlightIndex = -1;
                 menuOpen = false;
                 menuArmed = false;
+                tapState = null;
             });
 
             applyFontScale();

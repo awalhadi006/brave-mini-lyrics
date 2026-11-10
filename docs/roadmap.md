@@ -19,13 +19,13 @@ Status: `selesai`, `dikerjakan`, `rencana`.
 
 | # | Fitur / perbaikan | Status |
 |---|---|---|
-| 4 | Edit lirik manual (perbaiki typo, hapus bagian) | rencana |
-| 5 | Buat lirik manual dari nol (paste teks / LRC) | rencana |
-| 6 | Progress pencarian + tombol stop | rencana |
-| 7 | Ubah lirik statis menjadi sinkron (mode tap-sync) | rencana |
-| 8 | Romanisasi Korea/China lewat Google Translate | rencana |
-| 10 | Mode Latin tetap aktif untuk lagu berikutnya | rencana |
-| 15 | Sumber lirik tambahan: NetEase / QQ Music | rencana |
+| 4 | Edit lirik manual (perbaiki typo, hapus bagian) | selesai |
+| 5 | Buat lirik manual dari nol (paste teks / LRC) | selesai |
+| 6 | Progress pencarian + tombol stop | selesai |
+| 7 | Ubah lirik statis menjadi sinkron (mode tap-sync) | selesai |
+| 8 | Romanisasi Korea/China lewat Google Translate | selesai |
+| 10 | Mode Latin tetap aktif untuk lagu berikutnya | selesai |
+| 15 | Sumber lirik tambahan: NetEase / QQ Music | selesai |
 
 ## Batch 3 — Polish (v1.3.0)
 
@@ -47,6 +47,10 @@ Status: `selesai`, `dikerjakan`, `rencana`.
 - **Poin 14 (Wanakana):** Wanakana hanya mengubah kana ke romaji, tidak bisa
   kanji. Karena itu Wanakana dipakai sebagai fast-path untuk baris tanpa kanji,
   sedangkan Kuroshiro tetap dipakai saat ada kanji.
-- **Poin 15 (sumber baru):** NetEase/QQ Music memerlukan request dari background
-  service worker karena CORS. Setiap sumber akan dibuat sebagai adapter dengan
-  skor kecocokan yang sama.
+- **Poin 15 (sumber baru):** NetEase/QQ Music diakses dari background service
+  worker karena CORS. QQ Music menolak permintaan lirik tanpa header `Referer`,
+  dan `fetch()` tidak bisa mengatur header itu, jadi service worker memasang
+  aturan `declarativeNetRequest` (`modifyHeaders`) untuk `c.y.qq.com` dan
+  `music.163.com`. Kedua adapter memakai skor kecocokan yang sama dengan lrclib.
+  NetEase memakai endpoint lama `/api/search/get` karena endpoint `/web`
+  mengembalikan data terenkripsi.

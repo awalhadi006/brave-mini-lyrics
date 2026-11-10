@@ -472,6 +472,160 @@ body.compact-mode .header-handle:hover {
     opacity: 1;
 }
 
+/* ================= STATUS PENCARIAN ================= */
+.loading-controls {
+    display: flex;
+    justify-content: center;
+    margin-top: 8px;
+}
+
+#btn-stop-search {
+    background: #7f1d1d;
+    border-color: #b91c1c;
+}
+
+#btn-stop-search:hover {
+    background: #991b1b;
+    border-color: #ef4444;
+}
+
+/* ================= EDITOR LIRIK ================= */
+.editor-panel {
+    position: absolute;
+    inset: 0;
+    z-index: 60;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 10px;
+    background: rgba(11, 18, 32, 0.94);
+    -webkit-backdrop-filter: blur(14px);
+    backdrop-filter: blur(14px);
+}
+
+.editor-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    font-weight: 700;
+    font-size: 0.95rem;
+    flex: 0 0 auto;
+}
+
+.editor-close {
+    background: transparent;
+    border: 0;
+    color: var(--muted);
+    font-size: 1rem;
+    cursor: pointer;
+    padding: 2px 6px;
+}
+
+.editor-close:hover {
+    color: #fff;
+}
+
+.editor-text {
+    flex: 1 1 auto;
+    min-height: 0;
+    width: 100%;
+    resize: none;
+    background: rgba(15, 23, 42, 0.9);
+    color: var(--text);
+    border: 1px solid #334155;
+    border-radius: 8px;
+    padding: 10px;
+    font-family: Consolas, monospace;
+    font-size: 0.82rem;
+    line-height: 1.5;
+    outline: none;
+}
+
+.editor-text:focus {
+    border-color: #3b82f6;
+}
+
+.editor-actions {
+    display: flex;
+    gap: 6px;
+    justify-content: center;
+    flex-wrap: wrap;
+    flex: 0 0 auto;
+}
+
+.editor-save {
+    background: #10b981;
+    border-color: #059669;
+}
+
+.editor-save:hover {
+    background: #059669;
+    border-color: #10b981;
+}
+
+.editor-hint {
+    margin: 0;
+    font-size: 0.66rem;
+    color: var(--muted);
+    text-align: center;
+    line-height: 1.4;
+    flex: 0 0 auto;
+}
+
+.editor-hint code {
+    color: #93c5fd;
+}
+
+.tap-view {
+    flex: 1 1 auto;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    gap: 14px;
+    text-align: center;
+}
+
+.tap-view[hidden] {
+    display: none;
+}
+
+.tap-count {
+    margin: 0;
+    font-size: 0.72rem;
+    color: var(--muted);
+}
+
+.tap-line {
+    margin: 0;
+    font-size: 1.2rem;
+    font-weight: 700;
+    line-height: 1.5;
+}
+
+.tap-actions {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.tap-hit {
+    background: #10b981;
+    color: #042f2e;
+    border: 0;
+    border-radius: 999px;
+    padding: 14px 30px;
+    font-size: 1rem;
+    font-weight: 800;
+    cursor: pointer;
+    font-family: inherit;
+}
+
+.tap-hit:active {
+    transform: scale(0.96);
+}
+
 /* ================= TOAST ================= */
 #toast {
     position: absolute;

@@ -4,6 +4,27 @@ Semua perubahan penting pada proyek ini didokumentasikan di file ini.
 Format mengikuti [Keep a Changelog](https://keepachangelog.com/id-ID/1.1.0/),
 dan versi mengikuti [Semantic Versioning](https://semver.org/lang/id/).
 
+## [1.2.0] - 2026-11-10
+
+### Ditambahkan
+- **Edit lirik manual** (✎): perbaiki typo, hapus bagian, atau tempel LRC sendiri.
+  Lirik manual disimpan per video dan dipakai lagi saat video dibuka.
+- **Buat lirik dari nol**: tombol ✎ juga tersedia saat lirik tidak ditemukan.
+- **Tap Sinkron**: putar lagu lalu tekan TAP setiap baris untuk mengubah lirik
+  statis menjadi LRC tersinkron, lengkap dengan tombol undo.
+- **Progress pencarian** menampilkan sumber dan kata kunci yang sedang dicari,
+  plus tombol **⏹ Hentikan**.
+- **Sumber lirik tambahan**: NetEase Cloud Music dan QQ Music, dipakai otomatis
+  saat lrclib tidak yakin dan pada pencarian manual.
+- **Romanisasi Korea/China** lewat Google Translate, dengan cache per video.
+- **Mode Latin persisten**: setelah diaktifkan, lirik non-Latin berikutnya
+  otomatis diromanisasi saat dimuat.
+
+### Diperbaiki
+- Hasil pencarian manual menampilkan asal sumber (NetEase / QQ Music).
+- Header QQ Music memakai aturan `declarativeNetRequest` karena header
+  `Referer` tidak bisa diatur lewat `fetch()`.
+
 ## [1.1.1] - 2026-11-10
 
 ### Diubah
