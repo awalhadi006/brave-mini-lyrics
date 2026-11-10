@@ -38,6 +38,26 @@ Status: `selesai`, `dikerjakan`, `rencana`.
 | — | Export / import cache lirik | selesai |
 | — | GitHub Actions: lint, test, zip rilis | selesai |
 
+## Batch 4 — Video kompilasi / multi-lagu (segments)
+
+Rencana lengkap ada di [#1](https://github.com/awalhadi006/brave-mini-lyrics/issues/1).
+Masalahnya: video kompilasi/mix berisi banyak lagu dalam satu video, sehingga
+durasi video tidak bisa dipakai sebagai durasi lagu dan `videoId` tidak berubah
+saat lagu berganti.
+
+| # | Fitur / perbaikan | Status |
+|---|---|---|
+| — | Deteksi batas lagu dari Chapters YouTube / timestamp deskripsi | rencana |
+| — | Model data `segments` (mulai/akhir, judul, artis, offset per lagu) | rencana |
+| — | Timeline multi-lagu: lirik digeser per segmen dan dipotong di batas lagu | rencana |
+| — | Penanda lagu manual (`＋ Tandai lagu`) untuk mix tanpa metadata | rencana |
+| — | Pencarian lazy + cache per segmen | rencana |
+| — | Peringatan "video kompilasi terdeteksi" agar auto-search tidak salah lagu | rencana |
+
+Audio recognition (Shazam/ACRCloud/AudD) **tidak** direncanakan: audio harus
+dikirim ke pihak ketiga (melanggar janji privasi di README) dan menangkap audio
+tab YouTube butuh `tabCapture` + offscreen document.
+
 ## Catatan teknis
 
 - **Poin 3 (popup biasa):** Document PiP sudah bisa di-resize dan selalu di atas
@@ -54,3 +74,7 @@ Status: `selesai`, `dikerjakan`, `rencana`.
   `music.163.com`. Kedua adapter memakai skor kecocokan yang sama dengan lrclib.
   NetEase memakai endpoint lama `/api/search/get` karena endpoint `/web`
   mengembalikan data terenkripsi.
+- **Batch 4 (segments):** batas lagu diambil dari `playerResponse.engagementPanels`
+  → `macroMarkersListRenderer` (Chapters), lalu fallback ke timestamp di
+  deskripsi. Video tanpa `segments` tetap memakai jalur single-track; offset
+  global hanya dipakai saat segmen tidak aktif supaya offset tidak dobel.
