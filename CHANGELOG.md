@@ -4,6 +4,16 @@ Semua perubahan penting pada proyek ini didokumentasikan di file ini.
 Format mengikuti [Keep a Changelog](https://keepachangelog.com/id-ID/1.1.0/),
 dan versi mengikuti [Semantic Versioning](https://semver.org/lang/id/).
 
+## [1.1.1] - 2026-11-10
+
+### Diubah
+- Menu lirik kembali muncul saat hover, tetapi hover baru aktif setelah tombol
+  panah diklik sekali. Menu tampil sebagai overlay di atas lirik dengan latar
+  semi-transparan dan efek blur, sehingga lirik tidak terdorong ke bawah dan
+  ukuran jendela tidak perlu di-resize lagi.
+- Klik tombol panah sekali lagi mengunci menu tetap terbuka; klik berikutnya
+  menutupnya. `Esc` juga menutup menu.
+
 ## [1.1.0] - 2026-11-10
 
 ### Keamanan

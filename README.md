@@ -41,6 +41,8 @@ tetap terlihat di atas jendela lain saat kamu berpindah aplikasi.
 | Aksi | Hasil |
 |---|---|
 | Klik icon ekstensi / `Alt+L` | Buka atau tutup jendela lirik |
+| Klik panah `▾` | Buka menu overlay; setelah itu cukup hover untuk membukanya |
+| Klik panah lagi / `Esc` | Kunci atau tutup menu |
 | Klik baris lirik | Lompat ke bagian lagu tersebut |
 | Klik kanan baris lirik | Kalibrasi offset instan |
 | `-0.1s` / `+0.1s` | Geser sinkronisasi lirik |

@@ -10,7 +10,7 @@ Status: `selesai`, `dikerjakan`, `rencana`.
 | 1 | Perbesar / perkecil font lirik | selesai |
 | 2 | Simpan hasil pencarian otomatis agar tidak mencari ulang | selesai |
 | 9 | Format pencarian manual `Judul - Artis` | selesai |
-| 11 | Menu hover diganti tombol panah yang bisa dibuka/tutup | selesai |
+| 11 | Menu panah dengan overlay hover (tidak menggeser lirik) | selesai |
 | 12 | Pembatas antara menu dan hasil pencarian | selesai |
 | 13 | Hasil pencarian bisa di-scroll sampai bawah | selesai |
 | — | Perbaikan XSS, `parseLrc`, listener leak, race condition, akurasi pencocokan | selesai |

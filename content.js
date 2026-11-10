@@ -31,6 +31,8 @@ if (window === window.top) {
         let lyricsTimeOffset = 0;
         let settings = { fontScale: 1 };
         let menuOpen = false;
+        let menuArmed = false;
+        let menuHoverTimer = null;
         let autoScrollPausedUntil = 0;
         let isAutoScrolling = false;
         let scrollResetTimer = null;
@@ -454,6 +456,37 @@ if (window === window.top) {
                 handle.textContent = menuOpen ? '▴' : '▾';
                 handle.setAttribute('aria-expanded', String(menuOpen));
             }
+        }
+
+        // Klik pertama "mengaktifkan" mode hover. Setelah itu menu muncul saat
+        // kursor masuk ke area menu dan tertutup saat kursor keluar.
+        function onMenuHandleClick() {
+            if (!menuArmed) {
+                menuArmed = true;
+                setMenuOpen(true);
+                return;
+            }
+            clearTimeout(menuHoverTimer);
+            setMenuOpen(!menuOpen);
+        }
+
+        function onMenuPointerEnter() {
+            if (!menuArmed) return;
+            clearTimeout(menuHoverTimer);
+            setMenuOpen(true);
+        }
+
+        function onMenuPointerLeave() {
+            if (!menuArmed) return;
+            clearTimeout(menuHoverTimer);
+            menuHoverTimer = setTimeout(() => {
+                setMenuOpen(false);
+            }, 280);
+        }
+
+        function closeMenu() {
+            clearTimeout(menuHoverTimer);
+            setMenuOpen(false);
         }
 
         function applyFontScale() {
@@ -888,7 +921,7 @@ if (window === window.top) {
             }
 
             bindHeaderEvents({ synced: synced, fallbackSearchText: fallbackSearchText });
-            setMenuOpen(false);
+            closeMenu();
             applyFontScale();
         }
 
@@ -1386,11 +1419,15 @@ if (window === window.top) {
             handle.textContent = '▾';
             handle.title = 'Menu lirik';
             handle.setAttribute('aria-expanded', 'false');
-            handle.addEventListener('click', () => setMenuOpen(!menuOpen));
+            handle.addEventListener('click', onMenuHandleClick);
+            handle.addEventListener('pointerenter', onMenuPointerEnter);
+            handle.addEventListener('pointerleave', onMenuPointerLeave);
 
             const header = document_.createElement('div');
             header.id = 'header';
             header.className = 'header';
+            header.addEventListener('pointerenter', onMenuPointerEnter);
+            header.addEventListener('pointerleave', onMenuPointerLeave);
 
             const container = document_.createElement('div');
             container.id = 'lyrics-container';
@@ -1417,7 +1454,7 @@ if (window === window.top) {
                 if (tag === 'INPUT' || tag === 'TEXTAREA') return;
 
                 if (event.key === 'Escape') {
-                    setMenuOpen(false);
+                    closeMenu();
                 } else if (event.code === 'Space') {
                     event.preventDefault();
                     if (videoElement) {
@@ -1445,11 +1482,13 @@ if (window === window.top) {
                 loadToken += 1;
                 clearTimeout(toastTimer);
                 clearTimeout(scrollResetTimer);
+                clearTimeout(menuHoverTimer);
                 pipWindow = null;
                 parsedLyrics = [];
                 lineElements = [];
                 currentHighlightIndex = -1;
                 menuOpen = false;
+                menuArmed = false;
             });
 
             applyFontScale();
