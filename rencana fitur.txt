@@ -1,0 +1,15 @@
+- fitur perbesar perkecil font lirik
+- fitur untuk menyimpan lirik yang sudah dicari, jadi agar ketika liriknya sudah ditemukan, dan videonya diplay di esok hari dia tidak usah searching lagi (seinget saya fitur ini sudah berlaku di mode manual, atau kalau ada perubahan tempo lagu, saya ingin menambahkan agar ketika liriknya searching otomatis dia juga disimpan)
+- kalau fitur pip diganti dengan pop up browser gitu bisa engga? seperti contohnya ada orang yang live streaming, live chatnya bisa di pop up jadi tidak nyatu dengan livenya, jadi windownya bisa diresize sesuka hati.
+- fitur edit lirik manual, misal kan liriknya sudah disediakan dari internet, nah kalau misal saya ingin ada beberapa pneyesuaian kecil pada liriknya apakah bisa? kayak misal ada typo atau ada beberapa bagian yang ingin saya hapus, karena kan kayak kalau video yang cover biasanya dia ada beberapa lirik yang diganti atau ditambahkan. makanya saya butuh fitur itu
+- fitur buat lirik manual, kalau misal liriknya tidak ditemukan, saya ingin buat sendiri, itu bagaimana baiknya?
+- menambahkan animasi loading dengan presentase ketika liriknya searching secara otomatis, terus ada fitur stop searching otomatis ketika masih loading, karena kan kadang ada beberapa video yang judulnya tidak sesuai lagunya, jadi makanya searching otomatisnya jadi lama, jadi mau saya stop searching otomatisnya lalu pakai fitur searching manualnya biar engga usah nunggu lama. 
+- kalau misalkan liriknya yang ditemukan hanya lirik statis, bagaimana caranya agar liriknya berubah menjadi sinkron (tidak statis)
+- kan fitur romajinya saat ini hanya untuk bahasa jepang, kalau misalkan bahasa lain seperti bahasa korea atau china atau lainnya yang butuh romjai, bisakah itu tetap pakai google translate? jadi fitur offlinenya hanya untuk jepang saja, karena kamus untuk bahasa lain saya belum menemukan atau yang seperti kuroshiro
+- untuk fitur pencarian manual, formatnya judul lagu - artis, jangan artis - judul lagu, jadi kadang saya kalau cari judulnya doang, yang diindex malah jadi nama artis bukan judul lagunya
+- untuk fitur pengubah jepang ke latin, kalau bisa sekali pencet itu untuk lagu selanjutnya juga, jadi tidak perlu pencet lagi kalau udah dipencet sekali
+- mengganti sistem hover up pada mouse, karena terkadang menghalangi kalau mau sekedar lihat liriknya, jadi nanti dibikin pop up saja, tetap ada hover up, tapi yang muncul itu hanya tanda panah gitu, kalau tanda panahnya ditekan baru muncul nanti menu-menu biasanya
+- ketika pencarian lirik, lirik yang dihasilkan di belakang menu jadi tidak bisa ditekan, jadi kalau bisa dikasih pembatas antara menu dengan hasil pencarian, agar bisa dipilih nanti liriknya
+- ketika pencarian lirik, tidak bisa discroll, ketika liriknya banyak dalam hasil pencarian, saya tidak bisa memilih lirik yang di paling bawahnya
+- ubah metode translate ke https://wanakana.com/
+- penambahan website selain lrclib.net
