@@ -1,62 +1,104 @@
+// Service worker Brave Mini Lyrics.
+
 chrome.action.onClicked.addListener((tab) => {
-    chrome.tabs.sendMessage(tab.id, { action: "toggle_lyrics" });
+    if (!tab || !tab.id) return;
+    chrome.tabs.sendMessage(tab.id, { action: 'toggle_lyrics' }, () => {
+        // Halaman non-YouTube tidak punya content script; abaikan error-nya.
+        void chrome.runtime.lastError;
+    });
+});
+
+chrome.commands.onCommand.addListener((command) => {
+    if (command !== 'toggle-lyrics') return;
+    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+        const tab = tabs && tabs[0];
+        if (!tab || !tab.id) return;
+        chrome.tabs.sendMessage(tab.id, { action: 'toggle_lyrics' }, () => {
+            void chrome.runtime.lastError;
+        });
+    });
 });
 
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
-    if (request.action === "romanize") {
-        // "Cheat Code" &dj=1 memaksa Google membalas dengan struktur JSON Object yang rapi
-        const url = 'https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=en&dt=rm&dj=1';
-        
-        fetch(url, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/x-www-form-urlencoded',
-            },
-            body: `q=${encodeURIComponent(request.text)}`
+    if (!request || request.action !== 'romanize') return undefined;
+
+    const senderUrl = sender.url || (sender.tab && sender.tab.url) || '';
+    if (!/^https:\/\/([a-z0-9-]+\.)*youtube\.com\//i.test(senderUrl)) {
+        sendResponse({ success: false, error: 'Origin tidak diizinkan.' });
+        return false;
+    }
+
+    const text = typeof request.text === 'string' ? request.text : '';
+    if (!text.trim()) {
+        sendResponse({ success: false, error: 'Teks kosong.' });
+        return false;
+    }
+    if (text.length > 10000) {
+        sendResponse({ success: false, error: 'Teks terlalu panjang.' });
+        return false;
+    }
+
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 8000);
+
+    const url =
+        'https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=en&dt=rm&dj=1';
+
+    fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: 'q=' + encodeURIComponent(text),
+        signal: controller.signal
+    })
+        .then((response) => {
+            if (!response.ok) throw new Error('HTTP ' + response.status);
+            return response.json();
         })
-        .then(response => response.json())
-        .then(data => {
+        .then((data) => {
             try {
-                let romanizedStr = "";
-                
-                if (data && data.sentences) {
-                    data.sentences.forEach(s => {
-                        // Ambil teks translit latin (jika ada), kalau tidak ada ambil teks aslinya
-                        let part = s.src_translit || s.orig || "";
-                        
-                        // LOGIKA ALGORITMA PENYELAMAT ARRAY (Mencegah Bug Paragraf Raksasa):
-                        // Hitung jumlah karakter enter (\n) di teks asli vs teks hasil
-                        let origNewlines = (s.orig && typeof s.orig === 'string') ? (s.orig.match(/\n/g) || []).length : 0;
-                        let partNewlines = (typeof part === 'string') ? (part.match(/\n/g) || []).length : 0;
-                        
-                        // Jika Google membuang karakter Enter (\n), paksa tambahkan kembali di akhir
-                        // Ini menjamin lirik tidak akan tergabung menjadi 1 paragraf panjang!
-                        if (origNewlines > partNewlines) {
-                            part += '\n'.repeat(origNewlines - partNewlines);
+                let romanized = '';
+                if (data && Array.isArray(data.sentences)) {
+                    data.sentences.forEach((sentence) => {
+                        let part = sentence.src_translit || sentence.orig || '';
+
+                        const originalNewlines =
+                            typeof sentence.orig === 'string'
+                                ? (sentence.orig.match(/\n/g) || []).length
+                                : 0;
+                        const partNewlines =
+                            typeof part === 'string' ? (part.match(/\n/g) || []).length : 0;
+
+                        // Google kadang membuang newline; kembalikan agar baris tetap sejajar.
+                        if (originalNewlines > partNewlines) {
+                            part += '\n'.repeat(originalNewlines - partNewlines);
                         }
-                        
-                        // Tambahkan spasi jika Google membuang spasi pemisah antar kalimat
-                        if (s.orig && s.orig.endsWith(' ') && !part.endsWith(' ') && !part.endsWith('\n')) {
+
+                        if (
+                            typeof sentence.orig === 'string' &&
+                            sentence.orig.endsWith(' ') &&
+                            !part.endsWith(' ') &&
+                            !part.endsWith('\n')
+                        ) {
                             part += ' ';
                         }
 
-                        romanizedStr += part;
+                        romanized += part;
                     });
                 }
 
-                if (romanizedStr.trim() !== "") {
-                    sendResponse({ success: true, text: romanizedStr });
+                if (romanized.trim() !== '') {
+                    sendResponse({ success: true, text: romanized });
                 } else {
-                    sendResponse({ success: false, error: "Teks tidak memiliki format huruf Latin." });
+                    sendResponse({ success: false, error: 'Tidak ada hasil transliterasi.' });
                 }
-            } catch (e) {
-                sendResponse({ success: false, error: e.message });
+            } catch (error) {
+                sendResponse({ success: false, error: error.message });
             }
         })
-        .catch(err => {
-            sendResponse({ success: false, error: err.message });
-        });
+        .catch((error) => {
+            sendResponse({ success: false, error: error.message });
+        })
+        .finally(() => clearTimeout(timeoutId));
 
-        return true; 
-    }
+    return true;
 });

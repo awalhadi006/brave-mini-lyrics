@@ -1,14 +1,34 @@
 {
   "manifest_version": 3,
   "name": "Brave Mini Lyrics (PiP)",
-  "version": "1.0",
+  "version": "1.1.0",
+  "minimum_chrome_version": "116",
   "description": "Menampilkan lirik melayang tersinkronisasi untuk video musik YouTube menggunakan Document PiP.",
+  "icons": {
+    "16": "icons/icon16.png",
+    "32": "icons/icon32.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
   "action": {
-    "default_title": "Buka/Tutup Jendela Lirik"
+    "default_title": "Buka/Tutup Jendela Lirik",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "32": "icons/icon32.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
   },
   "background": {
     "service_worker": "background.js"
   },
+  "permissions": [
+    "storage"
+  ],
+  "host_permissions": [
+    "https://lrclib.net/*",
+    "https://translate.googleapis.com/*"
+  ],
   "content_scripts": [
     {
       "matches": [
@@ -17,17 +37,29 @@
       "js": [
         "kuroshiro.min.js",
         "kuroshiro-analyzer-kuromoji.min.js",
+        "lib/lrc.js",
         "content.js"
-      ]
+      ],
+      "run_at": "document_idle"
     }
   ],
   "web_accessible_resources": [
     {
-      "resources": ["dict/*"],
-      "matches": ["https://*.youtube.com/*"]
+      "resources": [
+        "dict/*",
+        "pip.css"
+      ],
+      "matches": [
+        "https://*.youtube.com/*"
+      ]
     }
   ],
-  "host_permissions": [
-    "https://lrclib.net/*"
-  ]
+  "commands": {
+    "toggle-lyrics": {
+      "suggested_key": {
+        "default": "Alt+L"
+      },
+      "description": "Buka/tutup jendela lirik"
+    }
+  }
 }

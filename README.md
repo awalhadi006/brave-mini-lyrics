@@ -82,6 +82,7 @@ background service worker
 ```bash
 npm test        # unit test untuk parser LRC dan skor kecocokan
 npm run check   # syntax check file JS
+node scripts/make-icons.js   # regenerate icon PNG
 ```
 
 Struktur:
@@ -95,6 +96,8 @@ Struktur:
 ├── lib/lrc.js             # parser LRC, skor kecocokan, escape HTML
 ├── dict/                  # kamus Kuromoji (romanisasi Jepang)
 ├── kuroshiro*.js          # library romanisasi
+├── icons/                 # icon ekstensi (hasil generator)
+├── scripts/make-icons.js  # generator icon tanpa dependency
 ├── tests/                 # unit test (node:test)
 └── docs/roadmap.md        # rencana fitur per batch
 ```
