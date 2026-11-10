@@ -111,8 +111,21 @@ background service worker
 ```bash
 npm test        # unit test untuk parser LRC, skor kecocokan, dan kana
 npm run check   # syntax check file JS
+npm run e2e     # smoke test PiP di Brave/Chromium headless
 node scripts/make-icons.js   # regenerate icon PNG
 ```
+
+`npm run e2e` membuka instance browser terpisah dengan profil sementara dan
+`--mute-audio`, jadi Brave yang sedang kamu pakai tidak ikut ter-mute atau
+terganggu. Butuh Node.js 22+. Contoh:
+
+```bash
+npm run e2e -- "https://www.youtube.com/watch?v=Dk4qOa4ivIM"
+BML_EXPECT_TITLE="Dear God" npm run e2e
+```
+
+Variabel lain: `BML_BROWSER` (path browser), `BML_EXTENSION` (folder ekstensi),
+`BML_PORT` (port debugging), `BML_HEADFUL=1` (tampilkan jendela).
 
 Struktur:
 
@@ -128,6 +141,7 @@ Struktur:
 ├── kuroshiro*.js          # library romanisasi
 ├── icons/                 # icon ekstensi (hasil generator)
 ├── scripts/make-icons.js  # generator icon tanpa dependency
+├── scripts/e2e.js         # smoke test PiP (browser terpisah, audio mati)
 ├── tests/                 # unit test (node:test)
 ├── .github/workflows/     # CI: test, check, zip rilis
 └── docs/roadmap.md        # rencana fitur per batch
