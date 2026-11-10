@@ -14,13 +14,19 @@ if (window === window.top) {
     function run() {
         const PIP_CSS_URL = chrome.runtime.getURL('pip.css');
         const STORAGE_PREFIX = 'bml:v2:video:';
+        const DRAFT_PREFIX = 'bml:v2:draft:';
         const SETTINGS_KEY = 'bml:v2:settings';
         const INDEX_KEY = 'bml:v2:index';
         const MIGRATION_KEY = 'bml:v2:migrated';
         const LEGACY_PREFIX = 'bml_data_';
         const MAX_VIDEOS = 200;
         const CACHE_TTL_MS = 30 * 24 * 60 * 60 * 1000;
-        const SEARCH_TIMEOUT_MS = 8000;
+        const DRAFT_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+        const SEARCH_TIMEOUT_MS = 12000;
+        const SOURCE_TIMEOUT_MS = 8000;
+        // Skor minimum untuk hasil pencarian otomatis. Di bawah ini hasil
+        // dianggap bukan lagu yang sedang diputar.
+        const AUTO_MIN_SCORE = 0.5;
         const MAX_GOOGLE_CHARS = 3500;
         const DEFAULT_SETTINGS = {
             fontScale: 1,
@@ -59,6 +65,16 @@ if (window === window.top) {
         let latinState = createLatinState();
         let tapState = null;
         let pipBoundsSaveTimer = null;
+        let offsetSaveTimer = null;
+        let pendingOffset = null;
+        let editorInitialText = '';
+        let editorCloseArmed = false;
+        let editorCloseTimer = null;
+        let editorDraftTimer = null;
+        let loadingTimer = null;
+        let loadingStartedAt = 0;
+        let cacheClearArmed = false;
+        let cacheClearTimer = null;
 
         const kuroshiroPromise = { current: null };
 
@@ -163,6 +179,61 @@ if (window === window.top) {
                 await chrome.storage.local.set({ [INDEX_KEY]: index });
             } catch (error) {
                 console.warn('Brave Mini Lyrics: gagal memperbarui index', error);
+            }
+        }
+
+        async function pruneExpiredCache() {
+            try {
+                const all = await chrome.storage.local.get(null);
+                const index = all[INDEX_KEY] || {};
+                let indexChanged = false;
+                const removals = [];
+                const updates = {};
+                const draftRemovals = [];
+
+                for (const key of Object.keys(all)) {
+                    if (key.indexOf(DRAFT_PREFIX) === 0) {
+                        const draft = all[key];
+                        const fresh =
+                            draft &&
+                            draft.updatedAt &&
+                            Date.now() - draft.updatedAt < DRAFT_TTL_MS;
+                        if (!fresh) draftRemovals.push(key);
+                        continue;
+                    }
+                    if (!key.startsWith(STORAGE_PREFIX)) continue;
+                    const videoId = key.slice(STORAGE_PREFIX.length);
+                    const data = all[key];
+                    if (!data || typeof data !== 'object') continue;
+                    // Lirik manual buatan user jangan pernah dihapus otomatis.
+                    if (data.manualData) continue;
+                    if (!data.autoData || isCacheFresh(data.autoCachedAt)) continue;
+
+                    // Cache otomatis sudah lewat 30 hari. Offset tetap
+                    // dipertahankan; latinData dibuang karena kuncinya
+                    // bergantung pada lirik yang sudah kedaluwarsa.
+                    const next = Object.assign({}, data, {
+                        autoData: null,
+                        autoCachedAt: 0,
+                        latinData: null
+                    });
+                    if (next.offset) {
+                        updates[key] = next;
+                    } else {
+                        removals.push(key);
+                        if (index[videoId] !== undefined) {
+                            delete index[videoId];
+                            indexChanged = true;
+                        }
+                    }
+                }
+
+                if (removals.length > 0) await chrome.storage.local.remove(removals);
+                if (draftRemovals.length > 0) await chrome.storage.local.remove(draftRemovals);
+                if (Object.keys(updates).length > 0) await chrome.storage.local.set(updates);
+                if (indexChanged) await chrome.storage.local.set({ [INDEX_KEY]: index });
+            } catch (error) {
+                console.warn('Brave Mini Lyrics: gagal membersihkan cache kedaluwarsa', error);
             }
         }
 
@@ -299,7 +370,25 @@ if (window === window.top) {
                 artist = channelElement ? channelElement.textContent.trim() : '';
             }
 
+            // Channel soundtrack/OST ("Animania Soundtrack") bukan nama
+            // penyanyi. Channel resmi seperti "FLOW Official YouTube Channel"
+            // tetap memakai nama artisnya ("FLOW").
+            const channelInfo = Core.parseChannelArtist(artist);
+            const genericArtist = channelInfo.generic;
+
+            // Parsing OST dilakukan sebelum tanda kurung dibersihkan karena
+            // penanda seri sering berada di dalam kurung, mis.
+            // "Butterfly (Digimon OST)".
+            const ost = Core.parseOstTitle(title.replace(/【[^】]*】/g, ' '));
+            if (ost.series) title = ost.title;
+
             title = title.replace(/\[[^\]]*\]|\([^)]*\)|【[^】]*】/g, ' ');
+            // Tanda kutip CJK dipakai sebagai pemisah judul, bukan bagian lagu.
+            title = title.replace(/[「」『』]/g, ' ');
+            // Buang penanda tayangan yang bukan bagian judul lagu.
+            title = title.replace(/\b(?:special\s+)?anime\s+(?:movie|special|version|ver)\b/gi, ' ');
+            title = title.replace(/\b(?:special|animated)\s+movie\b/gi, ' ');
+            title = title.replace(/\b(?:movie|anime)\s+(?:version|ver|size)\b/gi, ' ');
             title = title.replace(
                 /\b(official\s+)?(lyrics?\s+video|music\s+video|promotion\s+video|video|audio|live|cover|performance)\b/gi,
                 ' '
@@ -307,7 +396,20 @@ if (window === window.top) {
             title = title.replace(/\b(feat|ft)\.?\s+.*$/i, ' ');
 
             const dashParts = title.split(/\s+[-–—]\s+/);
-            if (dashParts.length > 1) {
+            // Judul yang diawali nama artis ("FLOW - GO!!!" atau
+            // "FLOW「GO!!!」") dipangkas supaya pencarian memakai judul lagu.
+            const knownArtist = channelInfo.artist;
+            if (knownArtist && !ost.series) {
+                const prefix = new RegExp(
+                    '^\\s*' + Core.escapeRegExp(knownArtist) + '\\b[\\s:\\-–—|]*',
+                    'i'
+                );
+                const stripped = title.replace(prefix, '').trim();
+                if (stripped) title = stripped;
+            }
+            // Untuk channel OST, potongan sebelum tanda hubung biasanya nama
+            // seri, bukan artis. Jangan jadikan artis palsu.
+            if (!ost.series && !genericArtist && dashParts.length > 1) {
                 const first = dashParts[0].trim();
                 const rest = dashParts.slice(1).join(' - ').trim();
                 if (!artist) {
@@ -338,7 +440,15 @@ if (window === window.top) {
                 duration = videoElement.duration;
             }
 
-            return { title: title, artist: artist, duration: duration };
+            return {
+                title: title,
+                artist: artist,
+                // Nama artis yang dipakai untuk pencarian. Kosong untuk
+                // channel soundtrack supaya skor memakai nama seri.
+                searchArtist: genericArtist ? '' : channelInfo.artist || artist,
+                series: ost.series,
+                duration: duration
+            };
         }
 
         // ==========================================
@@ -399,20 +509,43 @@ if (window === window.top) {
             return unique;
         }
 
-        function fetchSource(source, payload) {
+        function fetchSource(source, payload, signal) {
             return new Promise((resolve) => {
                 let settled = false;
-                const finish = (value) => {
+                let timer = null;
+
+                function cleanup() {
+                    if (timer !== null) {
+                        clearTimeout(timer);
+                        timer = null;
+                    }
+                    if (signal) signal.removeEventListener('abort', onAbort);
+                }
+
+                function finish(value) {
                     if (settled) return;
                     settled = true;
+                    cleanup();
                     resolve(value);
-                };
-                const timer = setTimeout(() => finish([]), SEARCH_TIMEOUT_MS);
+                }
+
+                function onAbort() {
+                    finish([]);
+                }
+
+                if (signal) {
+                    if (signal.aborted) {
+                        finish([]);
+                        return;
+                    }
+                    signal.addEventListener('abort', onAbort, { once: true });
+                }
+
+                timer = setTimeout(() => finish([]), SOURCE_TIMEOUT_MS);
                 try {
                     chrome.runtime.sendMessage(
                         { action: 'lyrics_source', source: source, payload: payload },
                         (response) => {
-                            clearTimeout(timer);
                             if (chrome.runtime.lastError || !response || !response.success) {
                                 finish([]);
                                 return;
@@ -421,7 +554,6 @@ if (window === window.top) {
                         }
                     );
                 } catch (error) {
-                    clearTimeout(timer);
                     finish([]);
                 }
             });
@@ -430,14 +562,18 @@ if (window === window.top) {
         async function searchAuto(meta, signal, onProgress) {
             const report = typeof onProgress === 'function' ? onProgress : function () {};
 
-            report('Mencoba pencocokan langsung…');
+            report('Mencoba pencocokan langsung…', 0.05);
             const exact = await lrclibGet(meta, signal);
             if (exact) {
                 return { track: exact, score: 1, source: 'get' };
             }
 
             const queries = [];
+            // Prioritas: artis asli, lalu nama seri (untuk channel OST),
+            // baru judul saja. Contoh "Digimon OST - Butterfly" harus
+            // dicari sebagai "Butterfly Digimon".
             if (meta.title && meta.artist) queries.push(meta.title + ' ' + meta.artist);
+            if (meta.title && meta.series) queries.push(meta.title + ' ' + meta.series);
             if (meta.title) queries.push(meta.title);
             if (meta.title && /[|~]/.test(meta.title)) {
                 const parts = meta.title.split(/[|~]/).map((part) => part.trim()).filter((part) => part.length > 2);
@@ -445,8 +581,12 @@ if (window === window.top) {
             }
 
             let collected = [];
-            for (const query of queries) {
-                report('Mencari di lrclib: ' + query);
+            for (let i = 0; i < queries.length; i += 1) {
+                const query = queries[i];
+                report(
+                    'Mencari di lrclib: ' + query,
+                    0.1 + ((i + 1) / queries.length) * 0.45
+                );
                 const results = await lrclibSearch(query, signal);
                 collected = collected.concat(results);
                 if (collected.length >= 12) break;
@@ -462,17 +602,34 @@ if (window === window.top) {
                         { id: 'netease', label: 'NetEase' },
                         { id: 'qq', label: 'QQ Music' }
                     ];
-                    for (const source of sources) {
-                        report('Mencari di ' + source.label + '…');
-                        const tracks = await fetchSource(source.id, { query: fallbackQuery });
+                    // Jalankan paralel: kalau satu sumber lambat, sumber lain
+                    // tidak ikut menunggu dan total waktu pencarian lebih pendek.
+                    report('Mencari di NetEase & QQ Music…', 0.7);
+                    const fallbackTracks = await Promise.all(
+                        sources.map((source) =>
+                            fetchSource(source.id, { query: fallbackQuery }, signal)
+                        )
+                    );
+                    fallbackTracks.forEach((tracks) => {
                         if (tracks.length > 0) collected = collected.concat(tracks);
-                    }
+                    });
                     const extra = Core.pickBestTrack(dedupeTracks(collected), meta);
                     if (extra && (!best || extra.score > best.score)) best = extra;
                 }
             }
 
             if (!best) return null;
+            // Jangan tampilkan hasil yang jelas bukan lagu ini. Lebih baik
+            // "tidak ditemukan" daripada lirik lagu lain (mis. GO! - Cortis).
+            if (best.score < AUTO_MIN_SCORE) {
+                console.warn(
+                    'Brave Mini Lyrics: skor pencocokan rendah (' +
+                        best.score.toFixed(2) +
+                        '), hasil diabaikan: ' +
+                        (best.track.trackName || '?')
+                );
+                return null;
+            }
             return { track: best.track, score: best.score, source: best.track.source || 'search' };
         }
 
@@ -499,9 +656,12 @@ if (window === window.top) {
             if (alternative && alternative !== parsed.query) queries.push(alternative);
 
             let collected = [];
-            for (const item of queries) {
-                report('Mencari di lrclib: ' + item);
-                const results = await lrclibSearch(item, signal);
+            for (let i = 0; i < queries.length; i += 1) {
+                report(
+                    'Mencari di lrclib: ' + queries[i],
+                    0.1 + ((i + 1) / queries.length) * 0.45
+                );
+                const results = await lrclibSearch(queries[i], signal);
                 collected = collected.concat(results);
                 if (collected.length >= 30) break;
             }
@@ -510,11 +670,15 @@ if (window === window.top) {
                 { id: 'netease', label: 'NetEase' },
                 { id: 'qq', label: 'QQ Music' }
             ];
-            for (const source of sources) {
-                report('Mencari di ' + source.label + '…');
-                const tracks = await fetchSource(source.id, { query: parsed.query });
+            report('Mencari di NetEase & QQ Music…', 0.7);
+            const fallbackTracks = await Promise.all(
+                sources.map((source) =>
+                    fetchSource(source.id, { query: parsed.query }, signal)
+                )
+            );
+            fallbackTracks.forEach((tracks) => {
                 if (tracks.length > 0) collected = collected.concat(tracks);
-            }
+            });
 
             const unique = dedupeTracks(collected);
             unique.sort((a, b) => Core.scoreTrack(b, meta).score - Core.scoreTrack(a, meta).score);
@@ -772,6 +936,8 @@ if (window === window.top) {
                     </label>
                     <button type="button" class="sync-btn" id="btn-export" title="Ekspor cache lirik">⬇ Ekspor</button>
                     <button type="button" class="sync-btn" id="btn-import" title="Impor cache lirik">⬆ Impor</button>
+                    <button type="button" class="sync-btn" id="btn-clear-cache" title="Hapus cache lirik otomatis (lirik manual & offset tetap)">🧹 Hapus cache</button>
+                    <span class="cache-usage" id="cache-usage"></span>
                     <input type="file" id="import-file" accept="application/json,.json" hidden>
                 </div>
             `;
@@ -927,6 +1093,11 @@ if (window === window.top) {
             const btnExport = byId('btn-export');
             if (btnExport) btnExport.addEventListener('click', exportCache);
 
+            const btnClearCache = byId('btn-clear-cache');
+            if (btnClearCache) btnClearCache.addEventListener('click', clearAutoCache);
+
+            if (byId('cache-usage')) updateCacheUsage();
+
             const btnImport = byId('btn-import');
             const importFile = byId('import-file');
             if (btnImport && importFile) {
@@ -962,7 +1133,24 @@ if (window === window.top) {
 
         function saveOffset() {
             const videoId = getVideoId();
-            if (videoId) saveVideoData(videoId, { offset: lyricsTimeOffset });
+            if (!videoId) return;
+            // Tahan sebentar: tombol offset sering ditekan beruntun. Tulis
+            // sekali saja setelah berhenti, supaya tidak membanjiri storage.
+            pendingOffset = { videoId: videoId, offset: lyricsTimeOffset };
+            clearTimeout(offsetSaveTimer);
+            offsetSaveTimer = setTimeout(() => {
+                offsetSaveTimer = null;
+                flushOffset();
+            }, 400);
+        }
+
+        async function flushOffset() {
+            clearTimeout(offsetSaveTimer);
+            offsetSaveTimer = null;
+            const pending = pendingOffset;
+            pendingOffset = null;
+            if (!pending) return;
+            await saveVideoData(pending.videoId, { offset: pending.offset });
         }
 
         function toggleMaximize() {
@@ -970,11 +1158,20 @@ if (window === window.top) {
             const button = byId('btn-maximize');
 
             if (!pipWindow.isMaximized) {
-                pipWindow.originalWidth = pipWindow.outerWidth;
-                pipWindow.originalHeight = pipWindow.outerHeight;
+                pipWindow.originalBounds = {
+                    width: pipWindow.outerWidth,
+                    height: pipWindow.outerHeight,
+                    left: pipWindow.screenX,
+                    top: pipWindow.screenY
+                };
                 try {
-                    pipWindow.moveTo(0, 0);
-                    pipWindow.resizeTo(window.screen.availWidth, window.screen.availHeight);
+                    // Gunakan layar tempat jendela PiP berada, bukan selalu
+                    // layar utama, supaya perilaku multi-monitor tetap benar.
+                    const screenInfo = pipWindow.screen || window.screen;
+                    const left = Number.isFinite(screenInfo.availLeft) ? screenInfo.availLeft : 0;
+                    const top = Number.isFinite(screenInfo.availTop) ? screenInfo.availTop : 0;
+                    pipWindow.moveTo(left, top);
+                    pipWindow.resizeTo(screenInfo.availWidth, screenInfo.availHeight);
                     pipWindow.isMaximized = true;
                     if (button) {
                         button.textContent = '🗗';
@@ -986,10 +1183,20 @@ if (window === window.top) {
                 }
             } else {
                 try {
-                    const width = pipWindow.originalWidth || 360;
-                    const height = pipWindow.originalHeight || 560;
+                    const bounds = pipWindow.originalBounds;
+                    const width = (bounds && bounds.width) || 360;
+                    const height = (bounds && bounds.height) || 560;
+                    const screenInfo = pipWindow.screen || window.screen;
+                    const left =
+                        bounds && Number.isFinite(bounds.left)
+                            ? bounds.left
+                            : Math.max(0, screenInfo.availWidth - width - 50);
+                    const top =
+                        bounds && Number.isFinite(bounds.top)
+                            ? bounds.top
+                            : 50;
                     pipWindow.resizeTo(width, height);
-                    pipWindow.moveTo(window.screen.availWidth - width - 50, 50);
+                    pipWindow.moveTo(left, top);
                     pipWindow.isMaximized = false;
                     if (button) {
                         button.textContent = '⛶';
@@ -1046,6 +1253,7 @@ if (window === window.top) {
         async function exportCache() {
             if (!pipWindow) return;
             try {
+                await flushOffset();
                 const all = await chrome.storage.local.get(null);
                 const data = {};
                 for (const key of Object.keys(all)) {
@@ -1110,10 +1318,125 @@ if (window === window.top) {
                 await loadSettings();
                 applyFontScale();
                 loadLyricsToPiP(null, null, { force: true });
+                await updateCacheUsage();
                 toast(count + ' entri diimpor');
             } catch (error) {
                 console.error('Brave Mini Lyrics: gagal mengimpor cache', error);
                 toast('File backup tidak valid');
+            }
+        }
+
+        // ==========================================
+        // MANAJEMEN CACHE
+        // ==========================================
+        function formatBytes(bytes) {
+            const value = Number(bytes) || 0;
+            if (value < 1024) return value + ' B';
+            if (value < 1024 * 1024) return (value / 1024).toFixed(1) + ' KB';
+            return (value / (1024 * 1024)).toFixed(1) + ' MB';
+        }
+
+        async function getCacheStats() {
+            const stats = { entries: 0, bytes: 0 };
+            try {
+                const all = await chrome.storage.local.get(null);
+                const encoder = new TextEncoder();
+                for (const key of Object.keys(all)) {
+                    if (key.indexOf(STORAGE_PREFIX) !== 0) continue;
+                    const data = all[key];
+                    if (data && (data.autoData || data.manualData || data.latinData)) {
+                        stats.entries += 1;
+                    }
+                    try {
+                        stats.bytes += encoder.encode(JSON.stringify(all[key])).length;
+                    } catch (error) {
+                        // nilai tidak bisa diserialisasi: abaikan ukurannya
+                    }
+                }
+            } catch (error) {
+                console.warn('Brave Mini Lyrics: gagal menghitung cache', error);
+            }
+            return stats;
+        }
+
+        async function updateCacheUsage() {
+            const element = byId('cache-usage');
+            if (!element) return;
+            const stats = await getCacheStats();
+            element.textContent =
+                stats.entries > 0
+                    ? stats.entries + ' lagu · ' + formatBytes(stats.bytes)
+                    : 'cache kosong';
+        }
+
+        async function clearAutoCache() {
+            if (!pipWindow) return;
+            // Hapus cache itu permanen, jadi minta konfirmasi kedua.
+            if (!cacheClearArmed) {
+                cacheClearArmed = true;
+                toast('Tekan 🧹 sekali lagi untuk menghapus cache lirik otomatis.');
+                clearTimeout(cacheClearTimer);
+                cacheClearTimer = setTimeout(() => {
+                    cacheClearArmed = false;
+                }, 4000);
+                return;
+            }
+            clearTimeout(cacheClearTimer);
+            cacheClearArmed = false;
+
+            try {
+                await flushOffset();
+                const all = await chrome.storage.local.get(null);
+                const index = all[INDEX_KEY] || {};
+                const removals = [];
+                const updates = {};
+                const draftRemovals = [];
+                let cleared = 0;
+                let indexChanged = false;
+
+                for (const key of Object.keys(all)) {
+                    if (key.indexOf(DRAFT_PREFIX) === 0) {
+                        draftRemovals.push(key);
+                        continue;
+                    }
+                    if (key.indexOf(STORAGE_PREFIX) !== 0) continue;
+                    const data = all[key];
+                    if (!data || typeof data !== 'object') continue;
+                    if (!data.autoData && !data.latinData) continue;
+
+                    cleared += 1;
+                    const next = Object.assign({}, data, {
+                        autoData: null,
+                        autoCachedAt: 0,
+                        latinData: null
+                    });
+                    // Lirik manual dan offset tetap disimpan.
+                    if (next.manualData || next.offset) {
+                        updates[key] = next;
+                    } else {
+                        removals.push(key);
+                        const videoId = key.slice(STORAGE_PREFIX.length);
+                        if (index[videoId] !== undefined) {
+                            delete index[videoId];
+                            indexChanged = true;
+                        }
+                    }
+                }
+
+                if (removals.length > 0) await chrome.storage.local.remove(removals);
+                if (draftRemovals.length > 0) await chrome.storage.local.remove(draftRemovals);
+                if (Object.keys(updates).length > 0) await chrome.storage.local.set(updates);
+                if (indexChanged) await chrome.storage.local.set({ [INDEX_KEY]: index });
+
+                toast(
+                    cleared > 0
+                        ? cleared + ' cache lirik dihapus'
+                        : 'Tidak ada cache lirik otomatis'
+                );
+                await updateCacheUsage();
+            } catch (error) {
+                console.error('Brave Mini Lyrics: gagal menghapus cache', error);
+                toast('Gagal menghapus cache');
             }
         }
 
@@ -1124,7 +1447,6 @@ if (window === window.top) {
             const body = pipWindow.document.body;
             body.classList.remove('results-mode', 'showing-results', 'search-active');
             body.classList.add('is-loading');
-            setMenuOpen(true);
 
             isSyncedLyrics = false;
             parsedLyrics = [];
@@ -1147,21 +1469,63 @@ if (window === window.top) {
                     ${searchBoxMarkup(fallbackSearchText)}
                 </div>
             `;
-            container.innerHTML = `<p class="loading" id="loading-status">${escapeHtml(
-                statusText || 'Menghubungkan ke database lirik…'
-            )}</p>`;
+            container.innerHTML = `
+                <div class="loading-box">
+                    <div class="loading-bar indeterminate" id="loading-bar">
+                        <div class="loading-bar-fill" id="loading-bar-fill"></div>
+                    </div>
+                    <p class="loading" id="loading-status">${escapeHtml(
+                        statusText || 'Menghubungkan ke database lirik…'
+                    )}</p>
+                    <p class="loading-elapsed" id="loading-elapsed">0:00</p>
+                </div>
+            `;
+            startLoadingProgress();
             bindHeaderEvents({ synced: false, fallbackSearchText: fallbackSearchText });
         }
 
-        function updateLoadingStatus(message) {
+        function startLoadingProgress() {
+            stopLoadingProgress();
+            loadingStartedAt = Date.now();
+            updateLoadingElapsed();
+            loadingTimer = setInterval(updateLoadingElapsed, 500);
+        }
+
+        function stopLoadingProgress() {
+            if (loadingTimer !== null) {
+                clearInterval(loadingTimer);
+                loadingTimer = null;
+            }
+        }
+
+        function updateLoadingElapsed() {
+            const element = byId('loading-elapsed');
+            if (!element) return;
+            const seconds = Math.floor((Date.now() - loadingStartedAt) / 1000);
+            element.textContent = Core.formatTime(seconds) || '0:00';
+        }
+
+        function updateLoadingStatus(message, progress) {
             const element = byId('loading-status');
             if (element) element.textContent = message;
+
+            const bar = byId('loading-bar');
+            const fill = byId('loading-bar-fill');
+            if (!bar || !fill) return;
+            if (typeof progress === 'number' && isFinite(progress)) {
+                const percent = Math.round(Math.min(1, Math.max(0, progress)) * 100);
+                bar.classList.remove('indeterminate');
+                fill.style.width = percent + '%';
+            } else {
+                bar.classList.add('indeterminate');
+                fill.style.width = '';
+            }
         }
 
         function renderStopped(fallbackSearchText) {
+            stopLoadingProgress();
             const body = pipWindow.document.body;
             body.classList.remove('is-loading', 'results-mode', 'showing-results');
-            setMenuOpen(true);
 
             const header = byId('header');
             const container = byId('lyrics-container');
@@ -1190,6 +1554,7 @@ if (window === window.top) {
         }
 
         function renderFound(data, fallbackSearchText, usedCache) {
+            stopLoadingProgress();
             const body = pipWindow.document.body;
             body.classList.remove('results-mode', 'showing-results', 'search-active', 'is-loading');
 
@@ -1279,6 +1644,7 @@ if (window === window.top) {
         }
 
         function renderResults(results, manualQuery, meta) {
+            stopLoadingProgress();
             const body = pipWindow.document.body;
             body.classList.remove('is-loading', 'search-active');
             body.classList.add('results-mode', 'showing-results');
@@ -1351,14 +1717,13 @@ if (window === window.top) {
 
             container.appendChild(list);
             bindHeaderEvents({ synced: false, fallbackSearchText: manualQuery });
-            setMenuOpen(true);
             applyFontScale();
         }
 
         function renderNotFound(fallbackSearchText) {
+            stopLoadingProgress();
             const body = pipWindow.document.body;
             body.classList.remove('results-mode', 'showing-results', 'is-loading');
-            setMenuOpen(true);
 
             const header = byId('header');
             const container = byId('lyrics-container');
@@ -1693,17 +2058,104 @@ if (window === window.top) {
             return '';
         }
 
-        function closeEditor() {
+        function closeEditor(force) {
             if (!pipWindow) return;
             const panel = pipWindow.document.getElementById('editor-panel');
-            if (panel) panel.remove();
+            if (!panel) {
+                tapState = null;
+                return;
+            }
+
+            const textarea = pipWindow.document.getElementById('editor-text');
+            const changed = Boolean(textarea) && textarea.value !== editorInitialText;
+            // Cegah edit hilang karena tidak sengaja menekan ✕ atau Esc.
+            if (!force && (changed || tapState)) {
+                if (!editorCloseArmed) {
+                    editorCloseArmed = true;
+                    toast(
+                        'Perubahan belum disimpan. Tekan ✕ atau Esc sekali lagi untuk menutup.'
+                    );
+                    clearTimeout(editorCloseTimer);
+                    editorCloseTimer = setTimeout(() => {
+                        editorCloseArmed = false;
+                    }, 3000);
+                    return;
+                }
+            }
+
+            clearTimeout(editorCloseTimer);
+            editorCloseArmed = false;
+            // Simpan draft terakhir saat editor ditutup tanpa menyimpan.
+            if (!force && textarea) {
+                clearTimeout(editorDraftTimer);
+                editorDraftTimer = null;
+                saveEditorDraft(textarea.value);
+            }
+            editorInitialText = '';
+            panel.remove();
             tapState = null;
+        }
+
+        function editorDraftKey(videoId) {
+            return DRAFT_PREFIX + (videoId || 'local');
+        }
+
+        async function loadEditorDraft(videoId) {
+            try {
+                const key = editorDraftKey(videoId);
+                const obj = await chrome.storage.local.get(key);
+                const draft = obj[key];
+                if (!draft || typeof draft.text !== 'string' || !draft.text) return null;
+                if (!draft.updatedAt || Date.now() - draft.updatedAt > DRAFT_TTL_MS) {
+                    await chrome.storage.local.remove(key);
+                    return null;
+                }
+                return draft;
+            } catch (error) {
+                console.warn('Brave Mini Lyrics: gagal membaca draft editor', error);
+                return null;
+            }
+        }
+
+        async function saveEditorDraft(text) {
+            const videoId = getVideoId();
+            if (!videoId) return;
+            const key = editorDraftKey(videoId);
+            try {
+                if (!text || text === editorInitialText) {
+                    await chrome.storage.local.remove(key);
+                    return;
+                }
+                await chrome.storage.local.set({
+                    [key]: { text: text, updatedAt: Date.now() }
+                });
+            } catch (error) {
+                console.warn('Brave Mini Lyrics: gagal menyimpan draft editor', error);
+            }
+        }
+
+        function scheduleEditorDraft(textarea) {
+            clearTimeout(editorDraftTimer);
+            editorDraftTimer = setTimeout(() => {
+                editorDraftTimer = null;
+                if (textarea) saveEditorDraft(textarea.value);
+            }, 800);
+        }
+
+        async function clearEditorDraft(videoId) {
+            clearTimeout(editorDraftTimer);
+            editorDraftTimer = null;
+            try {
+                await chrome.storage.local.remove(editorDraftKey(videoId));
+            } catch (error) {
+                // abaikan: draft hanya cadangan
+            }
         }
 
         function openEditor() {
             if (!pipWindow) return;
             closeMenu();
-            closeEditor();
+            closeEditor(true);
 
             const doc = pipWindow.document;
             const panel = doc.createElement('div');
@@ -1731,12 +2183,26 @@ if (window === window.top) {
                     <button type="button" class="sync-btn" id="editor-reset">Hapus manual</button>
                     <button type="button" class="sync-btn editor-save" id="editor-save">Simpan</button>
                 </div>
-                <p class="editor-hint">Format LRC: <code>[01:23.45]Teks lirik</code>. Tanpa timestamp akan disimpan sebagai lirik statis.</p>
+                <p class="editor-hint">Format LRC: <code>[01:23.45]Teks lirik</code>. Tanpa timestamp akan disimpan sebagai lirik statis.
+                    <br>Ctrl+Enter untuk menyimpan. Draft tersimpan otomatis.</p>
             `;
             doc.body.appendChild(panel);
 
             const textarea = doc.getElementById('editor-text');
+            const videoId = getVideoId();
             if (textarea) textarea.value = editorSeedText();
+            editorInitialText = textarea ? textarea.value : '';
+            editorCloseArmed = false;
+
+            loadEditorDraft(videoId).then((draft) => {
+                if (!draft || !textarea || !pipWindow) return;
+                if (!pipWindow.document.getElementById('editor-panel')) return;
+                // Jangan timpa kalau pengguna sudah mulai mengetik.
+                if (textarea.value !== editorInitialText) return;
+                textarea.value = draft.text;
+                editorInitialText = draft.text;
+                toast('Draft lirik dipulihkan');
+            });
 
             const bind = (id, handler) => {
                 const element = doc.getElementById(id);
@@ -1751,7 +2217,18 @@ if (window === window.top) {
             bind('tap-undo', undoTap);
             bind('tap-finish', finishTapSync);
 
-            if (textarea) textarea.focus();
+            if (textarea) {
+                // Simpan draft otomatis supaya edit tidak hilang kalau
+                // jendela PiP tertutup paksa.
+                textarea.addEventListener('input', () => scheduleEditorDraft(textarea));
+                textarea.addEventListener('keydown', (event) => {
+                    if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') {
+                        event.preventDefault();
+                        saveEditor();
+                    }
+                });
+                textarea.focus();
+            }
         }
 
         async function saveEditor() {
@@ -1784,7 +2261,8 @@ if (window === window.top) {
             if (videoId) {
                 await saveVideoData(videoId, { manualData: manualData, latinData: null });
             }
-            closeEditor();
+            await clearEditorDraft(videoId);
+            closeEditor(true);
             loadLyricsToPiP(null, manualData);
             toast(synced ? 'Lirik sinkron disimpan' : 'Lirik statis disimpan');
         }
@@ -1803,7 +2281,8 @@ if (window === window.top) {
             if (videoId) {
                 await saveVideoData(videoId, { manualData: null, latinData: null });
             }
-            closeEditor();
+            await clearEditorDraft(videoId);
+            closeEditor(true);
             loadLyricsToPiP(null, null, { force: true });
             toast('Lirik manual dihapus');
         }
@@ -1857,7 +2336,13 @@ if (window === window.top) {
 
         function hitTap() {
             if (!tapState || !videoElement) return;
-            tapState.times[tapState.index] = videoElement.currentTime;
+            // Simpan waktu relatif terhadap offset. Saat render, waktu lirik
+            // dihitung sebagai currentTime - lyricsTimeOffset, jadi kalau
+            // offset tidak dikurangi di sini hasil tap akan bergeser.
+            tapState.times[tapState.index] = Math.max(
+                0,
+                videoElement.currentTime - lyricsTimeOffset
+            );
             tapState.index += 1;
             renderTapState();
         }
@@ -1873,8 +2358,20 @@ if (window === window.top) {
             if (!pipWindow || !tapState) return;
             const doc = pipWindow.document;
             const textarea = doc.getElementById('editor-text');
-            const lrc = tapState.lines
-                .map((line, index) => Core.toLrcTimestamp(tapState.times[index] || 0) + line)
+            const tapped = tapState.lines
+                .map((line, index) => ({ line: line, time: tapState.times[index] }))
+                .filter((item) => typeof item.time === 'number' && isFinite(item.time));
+            const missed = tapState.lines.length - tapped.length;
+
+            if (tapped.length === 0) {
+                toast('Belum ada baris yang ditandai.');
+                return;
+            }
+
+            // Baris yang belum ditandai jangan diberi timestamp 0: kalau
+            // diberi 0, semuanya menumpuk di awal lagu dan merusak urutan.
+            const lrc = tapped
+                .map((item) => Core.toLrcTimestamp(item.time) + item.line)
                 .join('\n');
             if (textarea) {
                 textarea.value = lrc;
@@ -1883,7 +2380,11 @@ if (window === window.top) {
             const view = doc.getElementById('tap-view');
             if (view) view.hidden = true;
             tapState = null;
-            toast('Tap sinkron selesai. Tekan Simpan.');
+            toast(
+                missed > 0
+                    ? missed + ' baris belum ditandai dan tidak disimpan. Tekan Simpan.'
+                    : 'Tap sinkron selesai. Tekan Simpan.'
+            );
         }
 
         // ==========================================
@@ -1891,6 +2392,9 @@ if (window === window.top) {
         // ==========================================
         async function loadLyricsToPiP(manualQuery, directTrackData, options) {
             if (!pipWindow) return;
+
+            // Simpan offset video sebelumnya sebelum membaca data video baru.
+            await flushOffset();
 
             const currentVideo = getVideoElement();
             if (currentVideo && currentVideo !== videoElement) {
@@ -1911,9 +2415,21 @@ if (window === window.top) {
             const videoId = getVideoId();
             lastLoadedVideoId = videoId;
 
+            // Metadata untuk pencarian: artis asli, atau nama seri kalau
+            // channel-nya soundtrack.
+            const searchMeta = {
+                title: meta.title,
+                artist: meta.searchArtist || '',
+                series: meta.series || '',
+                duration: meta.duration
+            };
+            const artistLabel = meta.searchArtist || meta.series || meta.artist || '';
+
             const fallbackSearchText =
                 manualQuery ||
-                (meta.title ? meta.title + (meta.artist ? ' - ' + meta.artist : '') : meta.artist || '');
+                (meta.title
+                    ? meta.title + (artistLabel ? ' - ' + artistLabel : '')
+                    : artistLabel);
 
             let saved = {
                 offset: 0,
@@ -1929,8 +2445,8 @@ if (window === window.top) {
             }
             currentVideoData = saved;
 
-            const report = (message) => {
-                if (token === loadToken) updateLoadingStatus(message);
+            const report = (message, progress) => {
+                if (token === loadToken) updateLoadingStatus(message, progress);
             };
 
             lyricsTimeOffset = Number(saved.offset) || 0;
@@ -1993,7 +2509,7 @@ if (window === window.top) {
                     return;
                 }
 
-                const found = await searchAuto(meta, controller.signal, report);
+                const found = await searchAuto(searchMeta, controller.signal, report);
                 if (token !== loadToken) return;
                 if (searchStopRequested) {
                     renderStopped(fallbackSearchText);
@@ -2150,6 +2666,16 @@ if (window === window.top) {
                 savePipBounds(true);
                 clearTimeout(pipBoundsSaveTimer);
                 pipBoundsSaveTimer = null;
+                // Tulis offset yang masih tertahan debounce.
+                flushOffset();
+                // Simpan draft editor sebelum dokumen PiP dibuang.
+                const editorText = win.document.getElementById('editor-text');
+                if (editorText && editorText.value !== editorInitialText) {
+                    clearTimeout(editorDraftTimer);
+                    editorDraftTimer = null;
+                    saveEditorDraft(editorText.value);
+                }
+                stopLoadingProgress();
                 stopVideoWatcher();
                 unbindVideoEvents();
                 if (activeAbort) activeAbort.abort();
@@ -2208,6 +2734,7 @@ if (window === window.top) {
                 await loadSettings();
                 applyFontScale();
                 await migrateLegacyStorage();
+                await pruneExpiredCache();
 
                 if (savedBounds) {
                     try {

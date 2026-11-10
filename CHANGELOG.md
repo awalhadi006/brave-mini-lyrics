@@ -4,6 +4,63 @@ Semua perubahan penting pada proyek ini didokumentasikan di file ini.
 Format mengikuti [Keep a Changelog](https://keepachangelog.com/id-ID/1.1.0/),
 dan versi mengikuti [Semantic Versioning](https://semver.org/lang/id/).
 
+## [Unreleased]
+
+### Ditambahkan
+- **Progress bar pencarian** dengan persentase langkah, status sumber yang
+  sedang dicari, dan penghitung waktu berjalan. Bar beranimasi saat persentase
+  belum diketahui, lalu berhenti di 100% saat hasil ditemukan.
+- **Tombol 🧹 Hapus cache** di menu, dengan konfirmasi dua ketukan. Cache
+  otomatis dan draft editor dihapus; lirik manual dan offset tetap disimpan.
+  Di sebelahnya ada info pemakaian cache (jumlah lagu dan ukuran).
+- **Draft editor otomatis**: ketikan disimpan 800 ms setelah berhenti mengetik,
+  dipulihkan saat editor dibuka lagi, dan dibersihkan setelah Simpan/Hapus
+  manual. Draft kedaluwarsa (7 hari) ikut dibersihkan saat startup.
+- **Ctrl+Enter** (atau Cmd+Enter) untuk menyimpan lirik dari editor.
+- **Deteksi judul OST** (`parseOstTitle`): `Digimon OST - Butterfly`,
+  `Butterfly - Digimon OST`, dan `Butterfly (Digimon OST)` semuanya dipahami
+  sebagai lagu **Butterfly** dari seri **Digimon**.
+- **Deteksi channel soundtrack** (`parseChannelArtist`): channel seperti
+  `Animania Soundtrack` tidak dipakai sebagai nama artis, sedangkan channel
+  resmi seperti `FLOW Official YouTube Channel` tetap memakai artis **FLOW**
+  (begitu juga `- Topic` dan `VEVO`).
+- **Skor berbasis seri**: kalau artis tidak diketahui, nama seri dipakai
+  menggantikan artis dalam `scoreTrack` supaya cover/versi lain tidak menang.
+- **Ambang skor minimum** untuk pencarian otomatis: hasil dengan skor di bawah
+  0,5 ditampilkan sebagai "lirik tidak ditemukan", bukan lirik lagu lain.
+
+### Diperbaiki
+- **Tap Sinkron** sekarang menyimpan waktu relatif terhadap offset lirik, jadi
+  hasil tap tidak bergeser kalau offset pernah dikalibrasi.
+- Baris yang belum ditandai saat Tap Sinkron tidak lagi diberi timestamp `0`;
+  baris tersebut dilewati dan jumlahnya diberitahukan lewat toast.
+- Pencarian ke NetEase dan QQ Music sekarang berjalan paralel dan ikut
+  dibatalkan saat pencarian baru dimulai atau tombol ⏹ ditekan. Batas waktu
+  keseluruhan dinaikkan ke 12 detik agar sumber cadangan tetap kebagian waktu.
+- Offset yang diubah beruntun lewat tombol/panah sekarang ditulis sekali
+  (debounce 400 ms), tidak lagi membanjiri `chrome.storage.local`.
+- Tombol ⛶ mengembalikan jendela ke posisi semula dan memakai layar tempat
+  jendela PiP berada, sehingga perilaku multi-monitor lebih benar.
+- Editor lirik memberi peringatan kalau ditutup saat masih ada perubahan yang
+  belum disimpan (tekan ✕/Esc sekali lagi untuk menutup).
+- **Menu tidak lagi terbuka sendiri** setiap kali loading, hasil pencarian,
+  atau "lirik tidak ditemukan". Menu hanya terbuka saat panah ▾ diklik atau
+  di-hover setelah diaktifkan.
+- Judul video dibersihkan dari penanda tayangan seperti `Special Anime Movie`
+  dan `Movie Version`, sehingga pencarian memakai judul lagu sebenarnya.
+- **Lagu OST Digimon "Butterfly"** (`MuhkUzGAeHA`) sekarang menemukan lirik
+  Wada Kōji yang benar, bukan gagal atau memilih versi cover.
+- **Lagu Naruto "GO!!!"** (`733J7oUR904`) sekarang menemukan lirik FLOW yang
+  benar, bukan `GO! - Cortis`. Channel resmi FLOW tidak lagi dianggap channel
+  soundtrack generik, dan judul `GO!!! Special Anime Movie` dipangkas ke
+  `GO!!!` sebelum dicari.
+
+### Diubah
+- Cache lirik otomatis yang sudah lewat 30 hari dibersihkan saat jendela lirik
+  dibuka. Lirik manual dan offset tetap dipertahankan.
+- Izin `unlimitedStorage` ditambahkan supaya cache lirik tidak mentok kuota
+  `chrome.storage.local`.
+
 ## [1.3.1] - 2026-11-10
 
 ### Diperbaiki

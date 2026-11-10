@@ -150,3 +150,108 @@ test('stripArtistFromTitle: hanya kata utuh, bukan potongan kata', () => {
 test('stripArtistFromTitle: judul sama dengan artis tidak dikosongkan', () => {
     assert.equal(Core.stripArtistFromTitle('Queen', 'Queen'), 'Queen');
 });
+
+test('parseOstTitle: seri di depan, belakang, dan dalam kurung', () => {
+    assert.deepEqual(Core.parseOstTitle('Digimon OST - Butterfly'), {
+        title: 'Butterfly',
+        series: 'Digimon'
+    });
+    assert.deepEqual(Core.parseOstTitle('Butterfly - Digimon OST'), {
+        title: 'Butterfly',
+        series: 'Digimon'
+    });
+    assert.deepEqual(Core.parseOstTitle('Butterfly (Digimon OST)'), {
+        title: 'Butterfly',
+        series: 'Digimon'
+    });
+    assert.deepEqual(Core.parseOstTitle('Butterfly [Digimon Soundtrack]'), {
+        title: 'Butterfly',
+        series: 'Digimon'
+    });
+});
+
+test('parseOstTitle: OST tanpa nama seri dan judul biasa', () => {
+    assert.deepEqual(Core.parseOstTitle('OST - Butterfly'), {
+        title: 'Butterfly',
+        series: ''
+    });
+    assert.deepEqual(Core.parseOstTitle('Butterfly'), {
+        title: 'Butterfly',
+        series: ''
+    });
+    // Penanda non-OST tidak boleh dianggap seri.
+    assert.deepEqual(Core.parseOstTitle('Song (Official Video)'), {
+        title: 'Song (Official Video)',
+        series: ''
+    });
+});
+
+test('parseOstTitle: input kosong aman', () => {
+    assert.deepEqual(Core.parseOstTitle(''), { title: '', series: '' });
+    assert.deepEqual(Core.parseOstTitle(null), { title: '', series: '' });
+});
+
+test('isGenericArtistName: channel soundtrack dikenali', () => {
+    assert.equal(Core.isGenericArtistName('Animania Soundtrack'), true);
+    assert.equal(Core.isGenericArtistName('Various Artists'), true);
+    assert.equal(Core.isGenericArtistName('Anime OST'), true);
+    assert.equal(Core.isGenericArtistName('Wada Koji'), false);
+    assert.equal(Core.isGenericArtistName(''), false);
+});
+
+test('parseChannelArtist: channel resmi memakai nama artisnya', () => {
+    assert.deepEqual(Core.parseChannelArtist('FLOW Official YouTube Channel'), {
+        artist: 'FLOW',
+        generic: false
+    });
+    assert.deepEqual(Core.parseChannelArtist('FLOW - Topic'), {
+        artist: 'FLOW',
+        generic: false
+    });
+    assert.deepEqual(Core.parseChannelArtist('ArianaGrandeVEVO'), {
+        artist: 'ArianaGrande',
+        generic: false
+    });
+    assert.deepEqual(Core.parseChannelArtist('Wada Koji'), {
+        artist: 'Wada Koji',
+        generic: false
+    });
+});
+
+test('parseChannelArtist: channel soundtrack tetap generik', () => {
+    assert.deepEqual(Core.parseChannelArtist('Animania Soundtrack'), {
+        artist: '',
+        generic: true
+    });
+    assert.deepEqual(Core.parseChannelArtist('Anime OST'), {
+        artist: '',
+        generic: true
+    });
+    assert.deepEqual(Core.parseChannelArtist('Various Artists'), {
+        artist: '',
+        generic: true
+    });
+    assert.deepEqual(Core.parseChannelArtist(''), { artist: '', generic: false });
+});
+
+
+test('scoreTrack: nama seri menggantikan artis untuk channel OST', () => {
+    const meta = { title: 'Butterfly', artist: '', series: 'Digimon', duration: 258 };
+    const correct = {
+        trackName: 'Butterfly',
+        artistName: 'Wada Kōji',
+        albumName: 'Digimon Adventure',
+        duration: 258,
+        syncedLyrics: '[00:01.00]x'
+    };
+    const cover = {
+        trackName: 'Butterfly (Digimon Tri)',
+        artistName: 'Animelmack',
+        albumName: 'Butterfly (Digimon Tri)',
+        duration: 227,
+        syncedLyrics: '[00:01.00]x'
+    };
+    assert.ok(Core.scoreTrack(correct, meta).score > Core.scoreTrack(cover, meta).score);
+    assert.ok(Core.scoreTrack(correct, meta).seriesScore >= 0.9);
+    assert.equal(Core.scoreTrack(correct, meta).score, 1);
+});

@@ -15,11 +15,21 @@ atas jendela lain saat kamu berpindah aplikasi.
 - **Mode karaoke/ringkas** — hanya satu baris lirik besar di tengah.
 - **Kalibrasi offset** `±0.1s` dan kalibrasi instan dengan klik kanan pada baris.
 - **Pencarian otomatis & manual** dengan pencocokan judul, artis, dan durasi.
+- **Deteksi judul & channel OST** — judul seperti `Digimon OST - Butterfly`
+  dipahami sebagai lagu *Butterfly* dari seri *Digimon*, dan channel soundtrack
+  seperti `Animania Soundtrack` tidak dipakai sebagai nama artis. Channel resmi
+  (`FLOW Official YouTube Channel`, `- Topic`, `VEVO`) tetap memakai nama
+  artisnya.
 - **Sumber lirik tambahan** NetEase Cloud Music dan QQ Music, dipakai otomatis
   saat lrclib tidak yakin dan pada pencarian manual.
-- **Progress pencarian** dengan sumber yang sedang dicari dan tombol ⏹ Hentikan.
+- **Progress bar pencarian** dengan status sumber, persentase langkah, waktu
+  berjalan, dan tombol ⏹ Hentikan.
 - **Cache per video** — lirik yang sudah ditemukan tidak dicari ulang.
+- **Manajemen cache** — lihat jumlah lagu/ukuran cache dan hapus cache otomatis
+  dengan 🧹 tanpa menghapus lirik manual atau offset.
 - **Edit lirik manual** (✎): perbaiki typo, hapus bagian, atau tempel LRC sendiri.
+- **Draft otomatis + Ctrl+Enter** — ketikan tersimpan sementara dan dipulihkan
+  saat editor dibuka lagi; simpan cepat dengan `Ctrl+Enter`.
 - **Buat lirik dari nol** dan ubah lirik statis menjadi sinkron dengan
   **Tap Sinkron** (tekan TAP tiap baris, lengkap dengan undo).
 - **Romanisasi Jepang offline** (Kuroshiro + Kuromoji), toggle 🔤.
@@ -64,6 +74,7 @@ atas jendela lain saat kamu berpindah aplikasi.
 | 🎤 | Mode karaoke (satu baris besar) |
 | 🔤 | Ubah lirik Jepang/Korea/China ke huruf Latin |
 | ✎ | Edit lirik, tempel LRC sendiri, atau buat dari nol |
+| `Ctrl+Enter` (di editor) | Simpan lirik tanpa menekan tombol |
 | 🎯 Tap Sinkron | Ubah lirik statis jadi LRC dengan menekan TAP tiap baris |
 | ⏹ Hentikan | Stop pencarian yang sedang berjalan |
 | 🔍 | Cari lirik manual (`Judul Lagu - Nama Artis`) |
@@ -72,6 +83,7 @@ atas jendela lain saat kamu berpindah aplikasi.
 | 🌙 / ☀ | Ganti tema gelap / terang |
 | Slider **Latar** | Atur opasitas latar menu (30–100%) |
 | ⬇ Ekspor / ⬆ Impor | Backup atau pulihkan cache lirik (JSON) |
+| 🧹 Hapus cache | Hapus cache otomatis & draft (lirik manual dan offset tetap) |
 | `Space` | Play / pause |
 | `←` / `→` | Geser offset `-0.1s` / `+0.1s` |
 | `+` / `-` | Perbesar / perkecil font |
@@ -82,12 +94,13 @@ atas jendela lain saat kamu berpindah aplikasi.
 ```
 YouTube page (content script)
 ├── ambil metadata video (judul, artis, durasi)
+├── normalisasi judul OST + nama channel resmi
 ├── cari lirik ke lrclib.net (search + get, dengan skor kecocokan)
 ├── fallback ke NetEase / QQ Music lewat service worker
 ├── simpan ke chrome.storage.local (per videoId)
 ├── parse LRC -> daftar {time, text}
 ├── ikuti timeupdate video -> highlight baris aktif
-├── editor lirik manual + tap-sync (tersimpan per video)
+├── editor lirik manual + tap-sync + draft otomatis (per video)
 └── render ke jendela Document PiP (HTML + CSS sendiri)
 
 background service worker
@@ -144,7 +157,8 @@ Struktur:
 ├── scripts/e2e.js         # smoke test PiP (browser terpisah, audio mati)
 ├── tests/                 # unit test (node:test)
 ├── .github/workflows/     # CI: test, check, zip rilis
-└── docs/roadmap.md        # rencana fitur per batch
+├── docs/roadmap.md        # rencana fitur per batch
+└── docs/matching.md       # alur & aturan pencocokan lirik
 ```
 
 Setelah mengubah `manifest.json`, reload ekstensi di `brave://extensions` dan
@@ -157,7 +171,8 @@ refresh halaman YouTube.
 | Jendela lirik tidak muncul | Pastikan Brave/Chrome versi 116+ dan ada video yang sedang diputar |
 | Muncul popup biasa, bukan PiP | Browser tidak mendukung Document PiP; popup tetap berfungsi, izinkan popup untuk YouTube |
 | Posisi jendela tidak kembali | Pindahkan/resize jendela, tutup, lalu buka lagi; posisi disimpan otomatis |
-| Lirik tidak ditemukan | Gunakan 🔍 lalu ketik `Judul Lagu - Nama Artis` |
+| Lirik tidak ditemukan | Gunakan 🔍 lalu ketik `Judul Lagu - Nama Artis`; lihat juga [docs/matching.md](docs/matching.md) |
+| Lirik yang muncul lagu lain | Ekstensi menolak skor di bawah 0,5; cari manual lewat 🔍 atau laporkan judul video di issue |
 | Lirik tidak sinkron | Gunakan `-0.1s` / `+0.1s` atau klik kanan pada baris yang benar |
 | Lirik salah versi | Klik 🔍 dan pilih versi lain, atau ↻ untuk cari ulang |
 | Lirik salah ketik / ada bagian yang mau dihapus | Klik ✎, perbaiki, lalu **Simpan**. **Hapus manual** mengembalikan hasil otomatis |

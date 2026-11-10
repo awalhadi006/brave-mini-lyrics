@@ -58,6 +58,23 @@ Audio recognition (Shazam/ACRCloud/AudD) **tidak** direncanakan: audio harus
 dikirim ke pihak ketiga (melanggar janji privasi di README) dan menangkap audio
 tab YouTube butuh `tabCapture` + offscreen document.
 
+## Batch 5 — Perbaikan UX & pencocokan (Unreleased)
+
+| # | Fitur / perbaikan | Status |
+|---|---|---|
+| — | Progress bar + persentase + waktu berjalan saat mencari lirik | selesai |
+| — | Menu tidak lagi terbuka otomatis pada loading/not-found/hasil | selesai |
+| — | Info pemakaian cache + tombol hapus cache otomatis | selesai |
+| — | Draft editor otomatis + pintasan `Ctrl+Enter` | selesai |
+| — | Deteksi `Judul OST - Lagu` dan skor berbasis seri | selesai |
+| — | Deteksi channel resmi (`Official YouTube Channel`, `- Topic`, `VEVO`) | selesai |
+| — | Ambang skor minimum agar tidak menampilkan lirik lagu lain | selesai |
+| — | Perbaikan Tap Sinkron terhadap offset & baris yang belum ditandai | selesai |
+| — | Pencarian NetEase/QQ paralel dan bisa dibatalkan | selesai |
+| — | Debounce penulisan offset & pembersihan cache kedaluwarsa | selesai |
+
+Detail aturan pencocokan ada di [matching.md](matching.md).
+
 ## Catatan teknis
 
 - **Poin 3 (popup biasa):** Document PiP sudah bisa di-resize dan selalu di atas
@@ -78,3 +95,7 @@ tab YouTube butuh `tabCapture` + offscreen document.
   → `macroMarkersListRenderer` (Chapters), lalu fallback ke timestamp di
   deskripsi. Video tanpa `segments` tetap memakai jalur single-track; offset
   global hanya dipakai saat segmen tidak aktif supaya offset tidak dobel.
+- **Batch 5 (pencocokan):** judul OST diparsing sebelum tanda kurung dibersihkan,
+  nama channel resmi diambil dari `parseChannelArtist`, dan hasil pencarian di
+  bawah skor 0,5 tidak ditampilkan. Urutan lengkap ada di
+  [matching.md](matching.md).

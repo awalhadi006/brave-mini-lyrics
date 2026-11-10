@@ -230,6 +230,13 @@ body.menu-open .header {
     border-top: 1px solid var(--border);
 }
 
+.cache-usage {
+    font-size: 0.66rem;
+    color: var(--muted);
+    font-variant-numeric: tabular-nums;
+    align-self: center;
+}
+
 .opacity-control {
     display: inline-flex;
     align-items: center;
@@ -467,6 +474,57 @@ body.results-mode #lyrics-container {
     animation: pulse 1.6s ease-in-out infinite;
 }
 
+.loading-box {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 10px;
+    margin-top: 40px;
+}
+
+.loading-box .loading {
+    margin-top: 0;
+}
+
+.loading-bar {
+    width: min(82%, 260px);
+    height: 6px;
+    border-radius: 999px;
+    background: var(--btn-bg);
+    border: 1px solid var(--btn-border);
+    overflow: hidden;
+    position: relative;
+}
+
+.loading-bar-fill {
+    height: 100%;
+    width: 0;
+    border-radius: 999px;
+    background: linear-gradient(90deg, #10b981, #3b82f6);
+    transition: width 0.25s ease;
+}
+
+.loading-bar.indeterminate .loading-bar-fill {
+    width: 38%;
+    animation: loading-slide 1.2s ease-in-out infinite;
+}
+
+.loading-elapsed {
+    margin: 0;
+    font-size: 0.7rem;
+    font-variant-numeric: tabular-nums;
+    color: var(--muted);
+}
+
+@keyframes loading-slide {
+    0% {
+        transform: translateX(-110%);
+    }
+    100% {
+        transform: translateX(360%);
+    }
+}
+
 @keyframes pulse {
     0%,
     100% {
@@ -697,7 +755,8 @@ body.compact-mode .header-handle:hover {
     opacity: 0;
     pointer-events: none;
     transition: opacity 0.2s, transform 0.2s;
-    z-index: 50;
+    /* Di atas panel editor supaya peringatan "belum disimpan" terlihat. */
+    z-index: 70;
 }
 
 #toast.show {
