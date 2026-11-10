@@ -1,0 +1,11 @@
+{
+  "name": "brave-mini-lyrics",
+  "version": "1.1.0",
+  "private": true,
+  "description": "Floating synced lyrics for YouTube using Document Picture-in-Picture",
+  "license": "MIT",
+  "scripts": {
+    "test": "node --test tests/",
+    "check": "node --check content.js && node --check background.js && node --check lib/lrc.js"
+  }
+}
