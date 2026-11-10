@@ -11,6 +11,7 @@ atas jendela lain saat kamu berpindah aplikasi.
 ## Fitur
 
 - **Lirik tersinkron (LRC)** dengan highlight baris aktif dan auto-scroll.
+- **Otomatis mengikuti pergantian lagu** di YouTube (next, autoplay, back/forward).
 - **Mode karaoke/ringkas** — hanya satu baris lirik besar di tengah.
 - **Kalibrasi offset** `±0.1s` dan kalibrasi instan dengan klik kanan pada baris.
 - **Pencarian otomatis & manual** dengan pencocokan judul, artis, dan durasi.

@@ -4,6 +4,20 @@ Semua perubahan penting pada proyek ini didokumentasikan di file ini.
 Format mengikuti [Keep a Changelog](https://keepachangelog.com/id-ID/1.1.0/),
 dan versi mengikuti [Semantic Versioning](https://semver.org/lang/id/).
 
+## [1.2.1] - 2026-11-10
+
+### Diperbaiki
+- Lirik sekarang ikut berganti saat kamu pindah lagu di YouTube (termasuk
+  tombol **next** dan autoplay). Sebelumnya lirik lagu lama tetap tampil karena
+  deteksi pergantian lagu membaca atribut `ytd-watch-flexy[video-id]` yang
+  masih berisi ID lama selama ±1 detik, sehingga perubahan dianggap tidak ada.
+- Deteksi video baru kini memakai URL, menunggu metadata video benar-benar siap
+  (maksimal ±4 detik), dan mengulang pengecekan lewat event
+  `yt-navigate-finish`, `yt-page-data-updated`, `yt-player-updated`, `popstate`,
+  serta pengaman interval.
+- Lirik lagu lama tidak lagi tersimpan untuk video baru kalau video berganti
+  saat pencarian masih berjalan.
+
 ## [1.2.0] - 2026-11-10
 
 ### Ditambahkan

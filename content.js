@@ -43,6 +43,9 @@ if (window === window.top) {
         let searchStopRequested = false;
         let currentVideoData = { offset: 0, manualData: null, autoData: null, autoCachedAt: 0 };
         let lastLoadedVideoId = null;
+        let pendingVideoId = null;
+        let pendingVideoTimer = null;
+        let videoWatchTimer = null;
         let rafId = null;
         let boundVideoElement = null;
         let latinState = createLatinState();
@@ -64,14 +67,17 @@ if (window === window.top) {
         }
 
         function getVideoId() {
-            const watchFlexy = document.querySelector('ytd-watch-flexy');
-            if (watchFlexy && watchFlexy.hasAttribute('video-id')) {
-                return watchFlexy.getAttribute('video-id');
-            }
+            // URL paling cepat berubah saat navigasi SPA YouTube. Atribut
+            // ytd-watch-flexy[video-id] bisa masih berisi video lama ~1 detik,
+            // jadi jadikan fallback saja.
             const urlParams = new URLSearchParams(window.location.search);
             if (urlParams.has('v')) return urlParams.get('v');
             if (window.location.pathname.startsWith('/shorts/')) {
                 return window.location.pathname.split('/')[2];
+            }
+            const watchFlexy = document.querySelector('ytd-watch-flexy');
+            if (watchFlexy && watchFlexy.hasAttribute('video-id')) {
+                return watchFlexy.getAttribute('video-id');
             }
             return null;
         }
@@ -210,30 +216,41 @@ if (window === window.top) {
         // ==========================================
         // METADATA VIDEO
         // ==========================================
+        function getPlayerDetails() {
+            try {
+                const app = document.querySelector('ytd-app');
+                const raw = app && (app.__data || app.data);
+                const appData = raw && (raw.data || raw);
+                if (!appData) return null;
+
+                if (
+                    appData.player &&
+                    appData.player.args &&
+                    appData.player.args.raw_player_response
+                ) {
+                    return appData.player.args.raw_player_response.videoDetails || null;
+                }
+                if (appData.playerResponse) {
+                    return appData.playerResponse.videoDetails || null;
+                }
+            } catch (error) {
+                // struktur data YouTube bisa berubah: abaikan
+            }
+            return null;
+        }
+
         function getVideoMetadata() {
             let title = '';
             let artist = '';
             let duration = 0;
 
             try {
-                const app = document.querySelector('ytd-app');
-                const raw = app && (app.__data || app.data);
-                const appData = raw && (raw.data || raw);
-                let details = null;
+                const details = getPlayerDetails();
+                const currentId = getVideoId();
+                // Abaikan player response milik video sebelumnya.
+                const fresh = details && (!details.videoId || !currentId || details.videoId === currentId);
 
-                if (appData) {
-                    if (
-                        appData.player &&
-                        appData.player.args &&
-                        appData.player.args.raw_player_response
-                    ) {
-                        details = appData.player.args.raw_player_response.videoDetails;
-                    } else if (appData.playerResponse) {
-                        details = appData.playerResponse.videoDetails;
-                    }
-                }
-
-                if (details) {
+                if (fresh) {
                     title = details.title || '';
                     artist = details.author || '';
                     duration = Number(details.lengthSeconds) || 0;
@@ -1776,7 +1793,9 @@ if (window === window.top) {
                     return;
                 }
 
-                if (videoId) {
+                // Simpan hanya kalau video tidak berubah selama pencarian,
+                // supaya lirik lagu lama tidak tercatat untuk video baru.
+                if (videoId && getVideoId() === videoId) {
                     const patch = {
                         autoData: found.track,
                         autoCachedAt: Date.now()
@@ -1916,6 +1935,7 @@ if (window === window.top) {
             });
 
             win.addEventListener('pagehide', () => {
+                stopVideoWatcher();
                 unbindVideoEvents();
                 if (activeAbort) activeAbort.abort();
                 loadToken += 1;
@@ -1973,6 +1993,7 @@ if (window === window.top) {
                         applyFontScale();
                         await migrateLegacyStorage();
                         await loadLyricsToPiP(null);
+                        startVideoWatcher();
                     } catch (error) {
                         console.error('Brave Mini Lyrics: gagal menyiapkan PiP', error);
                         if (pipWindow === win) pipWindow = null;
@@ -2000,18 +2021,92 @@ if (window === window.top) {
             }
         });
 
-        document.addEventListener('yt-navigate-finish', () => {
+        // ==========================================
+        // DETEKSI GANTI LAGU (navigasi SPA YouTube)
+        // ==========================================
+        // Metadata dianggap siap kalau sudah benar-benar milik video baru.
+        // ytd-watch-flexy[video-id] dan player response bisa terlambat ~1 detik.
+        function videoMetadataReady(videoId) {
+            if (!videoId || getVideoId() !== videoId) return false;
+
+            const details = getPlayerDetails();
+            if (details && details.videoId) {
+                return details.videoId === videoId;
+            }
+
+            const watchFlexy = document.querySelector('ytd-watch-flexy');
+            if (watchFlexy && watchFlexy.hasAttribute('video-id')) {
+                return watchFlexy.getAttribute('video-id') === videoId;
+            }
+            return true;
+        }
+
+        function scheduleVideoReload(videoId) {
+            if (!pipWindow || !videoId) return;
+            if (pendingVideoId === videoId) return;
+
+            pendingVideoId = videoId;
+            clearTimeout(pendingVideoTimer);
+
+            // Jangan tampilkan lirik lagu sebelumnya selama lagu baru dimuat.
+            isSyncedLyrics = false;
+            parsedLyrics = [];
+            lineElements = [];
+            currentHighlightIndex = -1;
+            const container = byId('lyrics-container');
+            if (container) {
+                container.innerHTML = '<p class="loading">Mencari lirik lagu baru…</p>';
+            }
+
+            let attempts = 0;
+            const attempt = () => {
+                if (!pipWindow || pendingVideoId !== videoId) return;
+
+                // User pindah lagi sebelum video ini siap: batalkan.
+                if (getVideoId() !== videoId) {
+                    pendingVideoId = null;
+                    return;
+                }
+
+                // Tunggu metadata video baru (±4 detik), lalu lanjut juga
+                // supaya tidak macet kalau struktur YouTube berubah.
+                if (!videoMetadataReady(videoId) && attempts < 16) {
+                    attempts += 1;
+                    pendingVideoTimer = setTimeout(attempt, 250);
+                    return;
+                }
+
+                pendingVideoId = null;
+                unbindVideoEvents();
+                videoElement = getVideoElement() || videoElement;
+                loadLyricsToPiP(null);
+            };
+            attempt();
+        }
+
+        function checkVideoChange() {
             if (!pipWindow) return;
             const videoId = getVideoId();
             if (!videoId || videoId === lastLoadedVideoId) return;
+            scheduleVideoReload(videoId);
+        }
 
-            setTimeout(() => {
-                if (!pipWindow) return;
-                unbindVideoEvents();
-                videoElement = getVideoElement();
-                loadLyricsToPiP(null);
-            }, 1200);
+        function startVideoWatcher() {
+            stopVideoWatcher();
+            videoWatchTimer = setInterval(checkVideoChange, 1500);
+        }
+
+        function stopVideoWatcher() {
+            clearInterval(videoWatchTimer);
+            videoWatchTimer = null;
+            clearTimeout(pendingVideoTimer);
+            pendingVideoId = null;
+        }
+
+        ['yt-navigate-finish', 'yt-page-data-updated', 'yt-player-updated'].forEach((name) => {
+            document.addEventListener(name, checkVideoChange);
         });
+        window.addEventListener('popstate', checkVideoChange);
 
         console.log('Brave Mini Lyrics: content script siap.');
     }
