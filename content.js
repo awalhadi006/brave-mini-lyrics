@@ -655,7 +655,14 @@ if (window === window.top) {
             if (!(segments.length === 1 && segments[0] && segments[0].source === 'long-video')) {
                 return;
             }
-            if (tapState || byId('editor-panel') || byId('segment-panel')) return;
+            if (
+                tapState ||
+                byId('editor-panel') ||
+                byId('segment-panel') ||
+                byId('segment-list-panel')
+            ) {
+                return;
+            }
 
             const signature = chapters
                 .map((chapter) => Math.round(Number(chapter.start) * 10) + '|' + (chapter.title || ''))
@@ -1656,9 +1663,10 @@ if (window === window.top) {
 
             bar.innerHTML = `
                 <button type="button" class="seg-btn" id="seg-prev" title="Lagu sebelumnya"${prevDisabled}>‹</button>
-                <button type="button" class="seg-label" id="seg-open" title="Edit lagu ini">
+                <button type="button" class="seg-label" id="seg-open" title="Daftar lagu">
                     <span class="seg-counter">${escapeHtml(counter)}</span>
                     <span class="seg-title">${escapeHtml(label)}</span>
+                    <span class="seg-caret" aria-hidden="true">▾</span>
                 </button>
                 <button type="button" class="seg-btn" id="seg-edit" title="Edit lagu ini">✎</button>
                 <button type="button" class="seg-btn" id="seg-next" title="Lagu berikutnya"${nextDisabled}>›</button>
@@ -1673,9 +1681,116 @@ if (window === window.top) {
             bind('seg-next', () =>
                 segmentGoTo(Math.min(segments.length - 1, activeSegmentIndex + 1))
             );
-            bind('seg-open', openSegmentEditor);
+            bind('seg-open', openSegmentList);
             bind('seg-edit', openSegmentEditor);
             bind('seg-add', openNewSegmentDialog);
+            updateSegmentListActive();
+        }
+
+        // Daftar lagu: klik judul lagu untuk melompat ke waktu mulainya.
+        function openSegmentList() {
+            if (!pipWindow) return;
+            closeSegmentList();
+            closeSegmentDialog();
+
+            const doc = pipWindow.document;
+            const panel = doc.createElement('div');
+            panel.id = 'segment-list-panel';
+            panel.className = 'editor-panel segment-panel segment-list-panel';
+            panel.innerHTML = `
+                <div class="editor-head">
+                    <span>Daftar Lagu (${segments.length})</span>
+                    <button type="button" class="editor-close" id="segment-list-close" title="Tutup">✕</button>
+                </div>
+                <div class="seg-list" id="seg-list"></div>
+                <div class="editor-actions">
+                    <button type="button" class="sync-btn" id="segment-list-add">＋ Tandai lagu di posisi ini</button>
+                </div>
+                <p class="editor-hint">Klik lagu untuk melompat ke waktunya.</p>
+            `;
+            doc.body.appendChild(panel);
+            renderSegmentList();
+
+            const list = doc.getElementById('seg-list');
+            if (list) {
+                list.querySelectorAll('.seg-item').forEach((row) => {
+                    row.addEventListener('click', () => {
+                        const index = Number(row.dataset.index);
+                        closeSegmentList();
+                        segmentGoTo(index);
+                    });
+                });
+            }
+
+            const closeButton = doc.getElementById('segment-list-close');
+            if (closeButton) closeButton.addEventListener('click', closeSegmentList);
+
+            const addButton = doc.getElementById('segment-list-add');
+            if (addButton) {
+                addButton.addEventListener('click', () => {
+                    closeSegmentList();
+                    openNewSegmentDialog();
+                });
+            }
+        }
+
+        function renderSegmentList() {
+            if (!pipWindow) return;
+            const list = byId('seg-list');
+            if (!list) return;
+
+            list.innerHTML = segments
+                .map((segment, index) => {
+                    const title =
+                        segment.title ||
+                        (segment.source === 'long-video'
+                            ? 'Lagu belum ditandai'
+                            : 'Tanpa judul');
+                    const artist = segment.artist || '';
+                    const active = index === activeSegmentIndex;
+                    return `
+                        <button type="button" class="seg-item${active ? ' is-active' : ''}"
+                            data-index="${index}"${active ? ' aria-current="true"' : ''}>
+                            <span class="seg-item-index">${active ? '▶' : index + 1}</span>
+                            <span class="seg-item-text">
+                                <span class="seg-item-title">${escapeHtml(title)}</span>
+                                ${
+                                    artist
+                                        ? `<span class="seg-item-artist">${escapeHtml(artist)}</span>`
+                                        : ''
+                                }
+                            </span>
+                            <span class="seg-item-time">${escapeHtml(
+                                Core.formatTime(segment.start)
+                            )}</span>
+                        </button>
+                    `;
+                })
+                .join('');
+        }
+
+        function updateSegmentListActive() {
+            if (!pipWindow) return;
+            const panel = byId('segment-list-panel');
+            if (!panel) return;
+
+            const rows = panel.querySelectorAll('.seg-item');
+            rows.forEach((row) => {
+                const active = Number(row.dataset.index) === activeSegmentIndex;
+                row.classList.toggle('is-active', active);
+                if (active) row.setAttribute('aria-current', 'true');
+                else row.removeAttribute('aria-current');
+                const indexLabel = row.querySelector('.seg-item-index');
+                if (indexLabel) {
+                    indexLabel.textContent = active ? '▶' : String(Number(row.dataset.index) + 1);
+                }
+            });
+        }
+
+        function closeSegmentList() {
+            if (!pipWindow) return;
+            const panel = byId('segment-list-panel');
+            if (panel) panel.remove();
         }
 
         function segmentGoTo(index) {
@@ -1784,6 +1899,7 @@ if (window === window.top) {
 
         function openSegmentEditor() {
             if (!pipWindow) return;
+            closeSegmentList();
             if (!activeSegment()) {
                 openNewSegmentDialog();
                 return;
@@ -1801,6 +1917,7 @@ if (window === window.top) {
             if (!pipWindow) return;
             closeEditor(true);
             closeSegmentDialog();
+            closeSegmentList();
 
             const opts = options || {};
             const isNew = opts.mode !== 'edit';
@@ -3684,9 +3801,11 @@ if (window === window.top) {
                 if (
                     event.key === 'Escape' &&
                     (document_.getElementById('editor-panel') ||
-                        document_.getElementById('segment-panel'))
+                        document_.getElementById('segment-panel') ||
+                        document_.getElementById('segment-list-panel'))
                 ) {
                     event.preventDefault();
+                    closeSegmentList();
                     closeSegmentDialog();
                     closeEditor();
                     return;

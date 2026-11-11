@@ -20,6 +20,9 @@ _(belum ada)_
 - **Penanda lagu manual** lewat dialog Judul/Artis/Mulai; segmen sebelumnya
   otomatis dipotong, dan lagu baru bisa dihapus (waktunya digabung ke lagu
   sebelumnya). Hasil edit tidak ditimpa deteksi otomatis saat halaman dimuat ulang.
+- **Daftar lagu** di jendela PiP: klik judul lagu di bar untuk membuka
+  daftar, lalu klik lagu mana pun untuk melompat ke waktu mulainya. Lagu aktif
+  ditandai `▶`.
 - **Pencarian lazy + prefetch** per segmen: lirik lagu berikutnya disiapkan di
   belakang layar supaya pergantian lagu tidak menunggu.
 - **Peringatan "menunggu lagu"** saat posisi video berada di jeda antar segmen,

@@ -681,6 +681,86 @@ body.compact-mode .segment-bar {
     color: var(--muted);
 }
 
+.seg-caret {
+    flex: 0 0 auto;
+    margin-left: auto;
+    color: var(--muted);
+    font-size: 0.7rem;
+}
+
+.seg-list-panel .seg-list {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding-right: 2px;
+}
+
+.seg-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+    padding: 7px 8px;
+    border: 1px solid transparent;
+    border-radius: 8px;
+    background: var(--ctrl-bg);
+    color: var(--text);
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+    transition: background-color 0.15s, border-color 0.15s;
+}
+
+.seg-item:hover {
+    background: var(--btn-hover);
+}
+
+.seg-item.is-active {
+    border-color: var(--accent);
+}
+
+.seg-item-index {
+    flex: 0 0 auto;
+    width: 1.4em;
+    color: var(--accent);
+    font-size: 0.72rem;
+    font-weight: 700;
+    text-align: right;
+}
+
+.seg-item-text {
+    flex: 1 1 auto;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+}
+
+.seg-item-title {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 0.8rem;
+}
+
+.seg-item-artist {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 0.68rem;
+    color: var(--muted);
+}
+
+.seg-item-time {
+    flex: 0 0 auto;
+    font-size: 0.7rem;
+    color: var(--muted);
+    font-variant-numeric: tabular-nums;
+}
+
 .seg-field {
     display: flex;
     flex-direction: column;

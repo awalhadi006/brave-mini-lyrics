@@ -15,8 +15,8 @@ atas jendela lain saat kamu berpindah aplikasi.
 - **Video kompilasi / mix multi-lagu** — batas lagu dideteksi dari Chapters
   YouTube atau timestamp di deskripsi. Lirik, offset, dan cache disimpan per
   lagu; lagu berganti otomatis mengikuti posisi video. Ada bar lagu `‹ ›`,
-  tombol `＋` untuk menandai lagu baru secara manual, dan prefetch lirik lagu
-  berikutnya supaya perpindahan terasa instan.
+  tombol `＋` untuk menandai lagu baru secara manual, dan **daftar lagu** yang
+  bisa diklik untuk melompat ke waktu mulainya.
 - **Mode video panjang** — kalau video ≥ 10 menit tidak punya Chapters atau
   tracklist, ekstensi tidak menebak lirik dari judul video. PiP menampilkan
   panduan menandai lagu dengan `＋`, jadi video mix yang metadatanya kosong
@@ -80,6 +80,7 @@ atas jendela lain saat kamu berpindah aplikasi.
 | Klik baris lirik | Lompat ke bagian lagu tersebut |
 | Klik kanan baris lirik | Kalibrasi offset instan |
 | `‹` / `›` di bar lagu | Pindah ke lagu sebelumnya / berikutnya (video kompilasi) |
+| Klik judul di bar lagu | Buka **daftar lagu**; klik salah satu lagu untuk melompat ke waktunya |
 | `✎` di bar lagu | Edit judul, artis, atau waktu mulai lagu aktif |
 | `＋` di bar lagu / header | Tandai lagu baru pada posisi video saat ini |
 | `-0.1s` / `+0.1s` | Geser sinkronisasi lirik |

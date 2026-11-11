@@ -55,6 +55,7 @@ Status: **selesai** di [1.4.0](../CHANGELOG.md).
 | — | Model data `segments` (mulai/akhir, judul, artis, offset per lagu) | selesai |
 | — | Timeline multi-lagu: lirik digeser per segmen dan dipotong di batas lagu | selesai |
 | — | Penanda lagu manual (`＋ Tandai lagu`) untuk mix tanpa metadata | selesai |
+| — | Daftar lagu: klik judul untuk melompat ke waktu lagu | selesai |
 | — | Pencarian lazy + cache per segmen | selesai |
 | — | Peringatan "video kompilasi terdeteksi" agar auto-search tidak salah lagu | selesai |
 
