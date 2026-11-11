@@ -50,6 +50,8 @@ Status: **selesai** di [1.4.0](../CHANGELOG.md).
 | # | Fitur / perbaikan | Status |
 |---|---|---|
 | — | Deteksi batas lagu dari Chapters YouTube / timestamp deskripsi | selesai |
+| — | Chapters dari MAIN world lewat `page-bridge.js` (isolated world) | selesai |
+| — | Mode video panjang untuk video tanpa daftar lagu | selesai |
 | — | Model data `segments` (mulai/akhir, judul, artis, offset per lagu) | selesai |
 | — | Timeline multi-lagu: lirik digeser per segmen dan dipotong di batas lagu | selesai |
 | — | Penanda lagu manual (`＋ Tandai lagu`) untuk mix tanpa metadata | selesai |
@@ -95,7 +97,14 @@ Detail aturan pencocokan ada di [matching.md](matching.md).
   mengembalikan data terenkripsi.
 - **Batch 4 (segments):** batas lagu diambil dari `playerResponse.engagementPanels`
   → `macroMarkersListRenderer` (Chapters), lalu fallback ke timestamp di
-  deskripsi. Segmen disimpan per video di `bml:v2:video:<videoId>` beserta
+  deskripsi. Content script berjalan di isolated world, jadi data halaman
+  dibaca `page-bridge.js` yang dipasang di MAIN world (`"world": "MAIN"`) dan
+  dikirim lewat `window.postMessage`. Kalau tidak ada Chapters/tracklist dan
+  durasi ≥ 10 menit (atau ≥ 5 menit dengan judul kompilasi), ekstensi masuk
+  **mode video panjang**: satu segmen tanpa judul, tanpa pencarian memakai judul
+  video, dan pengguna menandai lagu dengan `＋`. Placeholder ini tidak disimpan;
+  menghapusnya memasang `segmentsDisabled` dan mengembalikan mode satu lagu.
+  Segmen disimpan per video di `bml:v2:video:<videoId>` beserta
   lirik/offset masing-masing. Saat video dimuat ulang, hasil deteksi baru
   digabung dengan segmen tersimpan berdasarkan awal ±1,5 detik agar lirik dan
   offset tidak hilang. Begitu pengguna mengedit/menandai lagu, flag

@@ -209,6 +209,29 @@ test('isCompilationVideo memakai heuristik segmen kalau tanpa keyword', () => {
     assert.equal(Segments.isCompilationVideo({ title: 'Dear God', duration: 240 }), false);
 });
 
+test('shouldUseLongVideoMode mendeteksi video panjang tanpa metadata lagu', () => {
+    assert.equal(Segments.shouldUseLongVideoMode({ title: 'Dear God', duration: 240 }), false);
+    assert.equal(
+        Segments.shouldUseLongVideoMode({ title: 'Konser 2026', duration: 600 }),
+        true
+    );
+    assert.equal(
+        Segments.shouldUseLongVideoMode({ title: 'Kumpulan Lagu Nostalgia', duration: 420 }),
+        true
+    );
+    // "Best of Me" bukan kompilasi kalau durasinya pendek.
+    assert.equal(Segments.shouldUseLongVideoMode({ title: 'Best of Me', duration: 240 }), false);
+});
+
+test('buildLongVideoSegment membuat satu segmen tanpa judul', () => {
+    const segment = Segments.buildLongVideoSegment(1800);
+    assert.equal(segment.start, 0);
+    assert.equal(segment.end, 1800);
+    assert.equal(segment.title, '');
+    assert.equal(segment.source, 'long-video');
+    assert.equal(segment.offset, 0);
+});
+
 test('findSegmentIndex menghormati batas segmen dan jeda', () => {
     const segments = [
         { start: 10, end: 100 },

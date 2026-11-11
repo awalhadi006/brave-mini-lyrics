@@ -471,7 +471,12 @@ if (window === window.top) {
         // Hasil deteksi dipakai untuk berpindah lagu otomatis, offset per lagu,
         // dan penandaan lagu manual dari PiP.
         const CHAPTER_NODE_LIMIT = 20000;
+        const PAGE_BRIDGE_SOURCE = 'bml-page-bridge';
         let segmentsCache = { key: '', segments: [] };
+        // Chapters dari MAIN-world bridge (lihat page-bridge.js).
+        let chapterBridge = { videoId: '', chapters: [], at: 0 };
+        let chapterRequestedFor = '';
+        let bridgeUpgradeSignature = '';
 
         function getPlayerResponse() {
             try {
@@ -536,6 +541,17 @@ if (window === window.top) {
         function getVideoChapterData() {
             if (!Segments) return [];
 
+            // Utamakan data dari page-bridge: content script tidak bisa membaca
+            // playerResponse/ytInitialData milik halaman (isolated world).
+            const videoId = getVideoId();
+            if (
+                chapterBridge.videoId &&
+                chapterBridge.videoId === videoId &&
+                chapterBridge.chapters.length >= 2
+            ) {
+                return chapterBridge.chapters;
+            }
+
             const player = getPlayerResponse();
             if (player) {
                 const fromPlayer = Segments.normalizeChapters(
@@ -581,6 +597,96 @@ if (window === window.top) {
                     ].join('|')
                 )
                 .join('\n');
+        }
+
+        // ==========================================
+        // JEMBATAN CHAPTERS (MAIN WORLD)
+        // ==========================================
+        function requestPageChapters() {
+            try {
+                window.postMessage({ source: 'bml-content', type: 'chapters' }, '*');
+            } catch (error) {
+                // abaikan
+            }
+        }
+
+        function bridgeDataReady(videoId) {
+            return Boolean(videoId) && chapterBridge.videoId === videoId;
+        }
+
+        // Tunggu jawaban page-bridge sekali per video. Untuk video yang tidak
+        // punya chapters, bridge tetap mengirim daftar kosong.
+        async function ensureChapterData(videoId, timeoutMs) {
+            if (!videoId) return;
+            if (bridgeDataReady(videoId)) return;
+            if (chapterRequestedFor === videoId) return;
+            chapterRequestedFor = videoId;
+            requestPageChapters();
+
+            await new Promise((resolve) => {
+                let settled = false;
+                let timer = null;
+                const finish = () => {
+                    if (settled) return;
+                    settled = true;
+                    clearTimeout(timer);
+                    window.removeEventListener('message', listener);
+                    resolve();
+                };
+                const listener = (event) => {
+                    if (event.source !== window) return;
+                    const data = event.data;
+                    if (!data || data.source !== PAGE_BRIDGE_SOURCE) return;
+                    if (data.type !== 'chapters') return;
+                    if (data.videoId && data.videoId !== videoId) return;
+                    finish();
+                };
+                window.addEventListener('message', listener);
+                timer = setTimeout(finish, timeoutMs || 700);
+            });
+        }
+
+        // Kalau chapters baru datang setelah mode video panjang aktif, ganti
+        // placeholder dengan segmen lagu sebenarnya tanpa menimpa hasil edit.
+        function maybeUpgradeLongVideo(chapters) {
+            if (!pipWindow) return;
+            if (!Array.isArray(chapters) || chapters.length < 2) return;
+            if (segmentsEdited || segmentsDisabled) return;
+            if (!(segments.length === 1 && segments[0] && segments[0].source === 'long-video')) {
+                return;
+            }
+            if (tapState || byId('editor-panel') || byId('segment-panel')) return;
+
+            const signature = chapters
+                .map((chapter) => Math.round(Number(chapter.start) * 10) + '|' + (chapter.title || ''))
+                .join('\n');
+            if (signature === bridgeUpgradeSignature) return;
+            bridgeUpgradeSignature = signature;
+
+            segmentsCache = { key: '', segments: [] };
+            loadLyricsToPiP(null, null);
+            toast('Chapters terdeteksi: memuat daftar lagu');
+        }
+
+        function setupChapterBridge() {
+            window.addEventListener('message', (event) => {
+                if (event.source !== window) return;
+                const data = event.data;
+                if (!data || data.source !== PAGE_BRIDGE_SOURCE || data.type !== 'chapters') {
+                    return;
+                }
+
+                const current = getVideoId();
+                if (data.videoId && current && data.videoId !== current) return;
+
+                chapterBridge = {
+                    videoId: data.videoId || current || '',
+                    chapters: Array.isArray(data.chapters) ? data.chapters : [],
+                    at: Date.now()
+                };
+                segmentsCache.key = '';
+                maybeUpgradeLongVideo(chapterBridge.chapters);
+            });
         }
 
         function normalizeStoredSegments(list) {
@@ -711,7 +817,21 @@ if (window === window.top) {
                 }
             }
 
-            if (segmentsCache.segments.length === 0) return normalizeStoredSegments(stored);
+            if (segmentsCache.segments.length === 0) {
+                const storedSegments = normalizeStoredSegments(stored);
+                if (storedSegments.length > 0) return storedSegments;
+
+                // Video panjang tanpa Chapters/tracklist: jangan cari lirik
+                // memakai judul video (hampir pasti lagu yang salah). Masuk
+                // mode penandaan lagu manual; placeholder sengaja tanpa judul.
+                if (Segments.shouldUseLongVideoMode(meta)) {
+                    console.info(
+                        'Brave Mini Lyrics: mode video panjang aktif (tanpa daftar lagu).'
+                    );
+                    return [Segments.buildLongVideoSegment(meta && meta.duration)];
+                }
+                return [];
+            }
             return mergeSegments(stored, segmentsCache.segments);
         }
 
@@ -1524,7 +1644,12 @@ if (window === window.top) {
                 activeSegmentIndex >= 0
                     ? 'Lagu ' + (activeSegmentIndex + 1) + '/' + segments.length
                     : segments.length + ' lagu';
-            const label = segment ? segmentDisplayTitle(segment) || 'Tanpa judul' : 'Menunggu lagu…';
+            const label = segment
+                ? segmentDisplayTitle(segment) ||
+                  (segments.length === 1 && segment.source === 'long-video'
+                      ? 'Tandai lagu dengan ＋'
+                      : 'Tanpa judul')
+                : 'Menunggu lagu…';
             const prevDisabled = activeSegmentIndex <= 0 ? ' disabled' : '';
             const nextDisabled =
                 activeSegmentIndex >= segments.length - 1 ? ' disabled' : '';
@@ -1614,7 +1739,25 @@ if (window === window.top) {
             const container = byId('lyrics-container');
             if (!header || !container) return;
 
-            header.innerHTML = `
+            const meta = getVideoMetadata();
+            const longVideo =
+                segments.length === 1 && segments[0] && !segments[0].title;
+            const videoSearchText = meta.title
+                ? meta.title + (meta.artist ? ' - ' + meta.artist : '')
+                : '';
+
+            header.innerHTML = longVideo
+                ? `
+                <div class="header-inner">
+                    <p class="title">Mode video panjang</p>
+                    <p class="artist">Durasi ${escapeHtml(
+                        Core.formatTime(meta.duration) || 'video ini'
+                    )} terlalu panjang untuk satu lagu</p>
+                    ${playerControlsMarkup()}
+                    ${searchBoxMarkup(videoSearchText)}
+                </div>
+            `
+                : `
                 <div class="header-inner">
                     <p class="title">Lagu tanpa judul</p>
                     <p class="artist">Isi judul lagu supaya liriknya bisa dicari</p>
@@ -1622,10 +1765,14 @@ if (window === window.top) {
                     ${searchBoxMarkup('')}
                 </div>
             `;
-            container.innerHTML =
-                '<p class="loading">Tekan ✎ pada bar lagu untuk mengisi judul dan artis, atau 🔍 untuk mencari manual.</p>';
+            container.innerHTML = longVideo
+                ? '<p class="loading">Tandai tiap lagu dengan <b>＋</b> tepat saat lagu baru dimulai, lalu isi judulnya. Lirik akan diganti otomatis per lagu.<br><br>Kalau video ini ternyata satu lagu panjang, buka 🔍 (judul video sudah terisi) lalu tekan <b>Cari</b>.</p>'
+                : '<p class="loading">Tekan ✎ pada bar lagu untuk mengisi judul dan artis, atau 🔍 untuk mencari manual.</p>';
 
-            bindHeaderEvents({ synced: false, fallbackSearchText: '' });
+            bindHeaderEvents({
+                synced: false,
+                fallbackSearchText: longVideo ? videoSearchText : ''
+            });
             renderSegmentBar();
             applyFontScale();
         }
@@ -3239,6 +3386,13 @@ if (window === window.top) {
                 latinData: null
             };
             if (videoId) saved = await getVideoData(videoId);
+
+            // Video panjang tanpa daftar lagu: beri kesempatan page-bridge
+            // mengirim Chapters sebelum memutuskan mode video panjang.
+            if (videoId && Segments && Segments.shouldUseLongVideoMode(meta)) {
+                await ensureChapterData(videoId, 700);
+            }
+
             if (token !== loadToken) {
                 clearTimeout(timeoutId);
                 return;
@@ -3252,8 +3406,14 @@ if (window === window.top) {
             segmentsDisabled = Boolean(saved.segmentsDisabled);
 
             if (segments.length > 0) {
+                const onlyLongVideoPlaceholder =
+                    segments.length === 1 &&
+                    segments[0] &&
+                    segments[0].source === 'long-video' &&
+                    !segments[0].title;
                 if (
                     !segmentsEdited &&
+                    !onlyLongVideoPlaceholder &&
                     segmentsSignature(saved.segments) !== segmentsSignature(segments)
                 ) {
                     saveVideoData(videoId, { segments: segments });
@@ -3813,6 +3973,7 @@ if (window === window.top) {
         });
         window.addEventListener('popstate', checkVideoChange);
 
+        setupChapterBridge();
         loadSettings();
 
         console.log('Brave Mini Lyrics: content script siap.');

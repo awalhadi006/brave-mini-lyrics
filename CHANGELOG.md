@@ -24,6 +24,14 @@ _(belum ada)_
   belakang layar supaya pergantian lagu tidak menunggu.
 - **Peringatan "menunggu lagu"** saat posisi video berada di jeda antar segmen,
   dan tampilan **"lagu tanpa judul"** untuk segmen yang belum diberi nama.
+- **Jembatan Chapters dari MAIN world** (`page-bridge.js`): content script
+  berjalan di isolated world sehingga tidak bisa membaca data milik halaman.
+  Bridge membaca `movie_player.getPlayerResponse()` / `ytInitialData`, lalu
+  mengirim daftar Chapters lewat `window.postMessage`.
+- **Mode video panjang**: video ≥ 10 menit (atau ≥ 5 menit dengan judul
+  kompilasi) yang tidak punya Chapters/tracklist tidak lagi mencari lirik
+  memakai judul video. PiP menampilkan panduan menandai lagu dengan `＋`;
+  tombol 🔍 sudah terisi judul video kalau ternyata isinya satu lagu panjang.
 - **Progress bar pencarian** dengan persentase langkah, status sumber yang
   sedang dicari, dan penghitung waktu berjalan. Bar beranimasi saat persentase
   belum diketahui, lalu berhenti di 100% saat hasil ditemukan.
@@ -47,6 +55,12 @@ _(belum ada)_
   0,5 ditampilkan sebagai "lirik tidak ditemukan", bukan lirik lagu lain.
 
 ### Diperbaiki
+- **Deteksi Chapters tidak pernah berjalan** karena content script berjalan di
+  isolated world: `ytInitialData`, `ytd-app.__data`, dan
+  `movie_player.getPlayerResponse()` tidak terlihat dari `content.js`.
+  Sekarang Chapters diambil oleh `page-bridge.js` di MAIN world.
+- Segmen placeholder "video panjang" tidak ikut disimpan, jadi menghapusnya
+  (`segmentsDisabled`) tetap mengembalikan video ke mode satu lagu.
 - **Tap Sinkron** sekarang menyimpan waktu relatif terhadap offset lirik, jadi
   hasil tap tidak bergeser kalau offset pernah dikalibrasi.
 - Baris yang belum ditandai saat Tap Sinkron tidak lagi diberi timestamp `0`;

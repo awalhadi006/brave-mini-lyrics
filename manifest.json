@@ -39,6 +39,17 @@
         "https://*.youtube.com/*"
       ],
       "js": [
+        "lib/segments.js",
+        "page-bridge.js"
+      ],
+      "run_at": "document_start",
+      "world": "MAIN"
+    },
+    {
+      "matches": [
+        "https://*.youtube.com/*"
+      ],
+      "js": [
         "kuroshiro.min.js",
         "kuroshiro-analyzer-kuromoji.min.js",
         "lib/lrc.js",
