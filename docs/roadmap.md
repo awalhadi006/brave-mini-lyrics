@@ -51,6 +51,9 @@ Status: **selesai** di [1.4.0](../CHANGELOG.md).
 |---|---|---|
 | — | Deteksi batas lagu dari Chapters YouTube / timestamp deskripsi | selesai |
 | — | Chapters dari MAIN world lewat `page-bridge.js` (isolated world) | selesai |
+| — | Deteksi lagu dari panel "In this video" (kartu Timeline YouTube baru) | selesai |
+| — | Segmen "Belum dikenali" untuk sisa video yang tidak disebut YouTube | selesai |
+| — | Tombol `⟳ Segarkan dari YouTube` di daftar lagu | selesai |
 | — | Mode video panjang untuk video tanpa daftar lagu | selesai |
 | — | Model data `segments` (mulai/akhir, judul, artis, offset per lagu) | selesai |
 | — | Timeline multi-lagu: lirik digeser per segmen dan dipotong di batas lagu | selesai |

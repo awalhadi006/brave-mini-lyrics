@@ -474,7 +474,7 @@ if (window === window.top) {
         const PAGE_BRIDGE_SOURCE = 'bml-page-bridge';
         let segmentsCache = { key: '', segments: [] };
         // Chapters dari MAIN-world bridge (lihat page-bridge.js).
-        let chapterBridge = { videoId: '', chapters: [], at: 0 };
+        let chapterBridge = { videoId: '', chapters: [], source: '', at: 0 };
         let chapterRequestedFor = '';
         let bridgeUpgradeSignature = '';
 
@@ -652,9 +652,11 @@ if (window === window.top) {
             if (!pipWindow) return;
             if (!Array.isArray(chapters) || chapters.length < 2) return;
             if (segmentsEdited || segmentsDisabled) return;
-            if (!(segments.length === 1 && segments[0] && segments[0].source === 'long-video')) {
-                return;
-            }
+
+            // Hanya placeholder (mode video panjang) atau belum ada segmen.
+            const placeholderOnly =
+                segments.length === 1 && segments[0] && segments[0].source === 'long-video';
+            if (!placeholderOnly && segments.length > 0) return;
             if (
                 tapState ||
                 byId('editor-panel') ||
@@ -689,11 +691,65 @@ if (window === window.top) {
                 chapterBridge = {
                     videoId: data.videoId || current || '',
                     chapters: Array.isArray(data.chapters) ? data.chapters : [],
+                    source: data.chapterSource || 'chapter',
                     at: Date.now()
                 };
                 segmentsCache.key = '';
                 maybeUpgradeLongVideo(chapterBridge.chapters);
             });
+        }
+
+        // Tunggu page-bridge mengirim daftar lagu (minimal 2) untuk video ini.
+        function waitForBridgeChapters(videoId, timeoutMs) {
+            return new Promise((resolve) => {
+                let done = false;
+                const finish = () => {
+                    if (done) return;
+                    done = true;
+                    clearTimeout(timer);
+                    window.removeEventListener('message', listener);
+                    resolve(chapterBridge.chapters || []);
+                };
+                const listener = (event) => {
+                    if (event.source !== window) return;
+                    const data = event.data;
+                    if (!data || data.source !== PAGE_BRIDGE_SOURCE) return;
+                    if (data.type !== 'chapters') return;
+                    if (data.videoId && videoId && data.videoId !== videoId) return;
+                    if (Array.isArray(data.chapters) && data.chapters.length >= 2) finish();
+                };
+                const timer = setTimeout(finish, timeoutMs || 10000);
+                window.addEventListener('message', listener);
+            });
+        }
+
+        // Baca ulang daftar lagu dari YouTube (Chapters / panel Timeline).
+        // Berguna kalau YouTube baru menyediakan marker setelah video diputar.
+        async function refreshSegmentsFromPage() {
+            const videoId = getVideoId();
+            if (!videoId) return;
+            if (segmentsEdited || segmentsDisabled) {
+                toast('Daftar lagu sudah diedit manual, deteksi ulang dilewati');
+                return;
+            }
+
+            closeSegmentList();
+            chapterBridge = { videoId: '', chapters: [], source: '', at: 0 };
+            chapterRequestedFor = '';
+            requestPageChapters();
+            toast('Mencari daftar lagu dari YouTube…');
+
+            const chapters = await waitForBridgeChapters(videoId, 12000);
+            if (segmentsEdited || segmentsDisabled) return;
+            if (!chapters || chapters.length < 2) {
+                toast('YouTube belum menyediakan daftar lagu untuk video ini');
+                return;
+            }
+
+            segmentsCache = { key: '', segments: [] };
+            bridgeUpgradeSignature = '';
+            await loadLyricsToPiP(null, null);
+            toast(chapters.length + ' lagu ditemukan dari YouTube');
         }
 
         function normalizeStoredSegments(list) {
@@ -791,6 +847,13 @@ if (window === window.top) {
                     entries = Segments.parseTracklist(description, { duration: duration });
                     source = 'description';
                 }
+                // Kartu lagu dari panel Timeline YouTube baru.
+                if (
+                    entries.length >= 2 &&
+                    entries.every((entry) => entry && entry.source === 'timeline')
+                ) {
+                    source = 'timeline';
+                }
 
                 let detected =
                     entries.length >= 2
@@ -810,6 +873,12 @@ if (window === window.top) {
                     })
                 ) {
                     detected = [];
+                }
+
+                // Timeline kadang hanya memuat sebagian lagu: jangan biarkan
+                // lagu terakhir menutupi sisa video yang panjang.
+                if (detected.length > 0 && source === 'timeline') {
+                    detected = Segments.trimTrailingUnknown(detected, duration);
                 }
 
                 segmentsCache = { key: key, segments: detected, source: source };
@@ -1655,7 +1724,9 @@ if (window === window.top) {
                 ? segmentDisplayTitle(segment) ||
                   (segments.length === 1 && segment.source === 'long-video'
                       ? 'Tandai lagu dengan ＋'
-                      : 'Tanpa judul')
+                      : segment.source === 'unknown'
+                        ? 'Belum dikenali'
+                        : 'Tanpa judul')
                 : 'Menunggu lagu…';
             const prevDisabled = activeSegmentIndex <= 0 ? ' disabled' : '';
             const nextDisabled =
@@ -1705,6 +1776,7 @@ if (window === window.top) {
                 <div class="seg-list" id="seg-list"></div>
                 <div class="editor-actions">
                     <button type="button" class="sync-btn" id="segment-list-add">＋ Tandai lagu di posisi ini</button>
+                    <button type="button" class="sync-btn" id="segment-list-refresh" title="Baca ulang daftar lagu dari YouTube">⟳ Segarkan dari YouTube</button>
                 </div>
                 <p class="editor-hint">Klik lagu untuk melompat ke waktunya.</p>
             `;
@@ -1732,6 +1804,11 @@ if (window === window.top) {
                     openNewSegmentDialog();
                 });
             }
+
+            const refreshButton = doc.getElementById('segment-list-refresh');
+            if (refreshButton) {
+                refreshButton.addEventListener('click', () => refreshSegmentsFromPage());
+            }
         }
 
         function renderSegmentList() {
@@ -1745,7 +1822,9 @@ if (window === window.top) {
                         segment.title ||
                         (segment.source === 'long-video'
                             ? 'Lagu belum ditandai'
-                            : 'Tanpa judul');
+                            : segment.source === 'unknown'
+                              ? 'Belum dikenali'
+                              : 'Tanpa judul');
                     const artist = segment.artist || '';
                     const active = index === activeSegmentIndex;
                     return `
@@ -1857,6 +1936,8 @@ if (window === window.top) {
             const meta = getVideoMetadata();
             const longVideo =
                 segments.length === 1 && segments[0] && !segments[0].title;
+            const segment = activeSegment();
+            const unknownRegion = !longVideo && Boolean(segment) && segment.source === 'unknown';
             const videoSearchText = meta.title
                 ? meta.title + (meta.artist ? ' - ' + meta.artist : '')
                 : '';
@@ -1874,15 +1955,21 @@ if (window === window.top) {
             `
                 : `
                 <div class="header-inner">
-                    <p class="title">Lagu tanpa judul</p>
-                    <p class="artist">Isi judul lagu supaya liriknya bisa dicari</p>
+                    <p class="title">${unknownRegion ? 'Lagu belum dikenali' : 'Lagu tanpa judul'}</p>
+                    <p class="artist">${
+                        unknownRegion
+                            ? 'YouTube belum menyediakan batas lagu di bagian ini'
+                            : 'Isi judul lagu supaya liriknya bisa dicari'
+                    }</p>
                     ${playerControlsMarkup()}
                     ${searchBoxMarkup('')}
                 </div>
             `;
             container.innerHTML = longVideo
                 ? '<p class="loading">Tandai tiap lagu dengan <b>＋</b> tepat saat lagu baru dimulai, lalu isi judulnya. Lirik akan diganti otomatis per lagu.<br><br>Kalau video ini ternyata satu lagu panjang, buka 🔍 (judul video sudah terisi) lalu tekan <b>Cari</b>.</p>'
-                : '<p class="loading">Tekan ✎ pada bar lagu untuk mengisi judul dan artis, atau 🔍 untuk mencari manual.</p>';
+                : unknownRegion
+                  ? '<p class="loading">Tekan <b>＋</b> tepat saat lagu berikutnya mulai, lalu isi judulnya. Lagu yang sudah dikenali ada di daftar <b>▾</b>.</p>'
+                  : '<p class="loading">Tekan ✎ pada bar lagu untuk mengisi judul dan artis, atau 🔍 untuk mencari manual.</p>';
 
             bindHeaderEvents({
                 synced: false,

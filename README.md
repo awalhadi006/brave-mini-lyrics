@@ -13,10 +13,20 @@ atas jendela lain saat kamu berpindah aplikasi.
 - **Lirik tersinkron (LRC)** dengan highlight baris aktif dan auto-scroll.
 - **Otomatis mengikuti pergantian lagu** di YouTube (next, autoplay, back/forward).
 - **Video kompilasi / mix multi-lagu** — batas lagu dideteksi dari Chapters
-  YouTube atau timestamp di deskripsi. Lirik, offset, dan cache disimpan per
+  YouTube, **panel "In this video" (kartu lagu Timeline)**, atau timestamp di
+  deskripsi. Lirik, offset, dan cache disimpan per
   lagu; lagu berganti otomatis mengikuti posisi video. Ada bar lagu `‹ ›`,
   tombol `＋` untuk menandai lagu baru secara manual, dan **daftar lagu** yang
   bisa diklik untuk melompat ke waktu mulainya.
+- **Timeline YouTube baru** — kalau YouTube hanya menampilkan panel "In this
+  video" (bukan Chapters di progress bar), ekstensi membuka panel itu sebentar
+  di latar belakang, membaca kartu lagu (judul + artis + perkiraan waktu), lalu
+  menutupnya lagi. Tidak ada audio yang direkam atau dikirim.
+- **Sisa video yang belum dikenali** — kalau YouTube hanya mengenali sebagian
+  lagu (mis. 10 dari 20 lagu), sisa video jadi satu segmen **Belum dikenali**
+  supaya lirik lagu terakhir tidak dipakai sampai akhir video. Tombol
+  **⟳ Segarkan dari YouTube** di daftar lagu membaca ulang marker kalau YouTube
+  menambahkannya belakangan.
 - **Mode video panjang** — kalau video ≥ 10 menit tidak punya Chapters atau
   tracklist, ekstensi tidak menebak lirik dari judul video. PiP menampilkan
   panduan menandai lagu dengan `＋`, jadi video mix yang metadatanya kosong
@@ -81,6 +91,7 @@ atas jendela lain saat kamu berpindah aplikasi.
 | Klik kanan baris lirik | Kalibrasi offset instan |
 | `‹` / `›` di bar lagu | Pindah ke lagu sebelumnya / berikutnya (video kompilasi) |
 | Klik judul di bar lagu | Buka **daftar lagu**; klik salah satu lagu untuk melompat ke waktunya |
+| `⟳ Segarkan dari YouTube` (daftar lagu) | Baca ulang Chapters / panel Timeline, mis. kalau YouTube baru menambahkan marker lagu |
 | `✎` di bar lagu | Edit judul, artis, atau waktu mulai lagu aktif |
 | `＋` di bar lagu / header | Tandai lagu baru pada posisi video saat ini |
 | `-0.1s` / `+0.1s` | Geser sinkronisasi lirik |
@@ -109,13 +120,21 @@ tepat saat lagu baru mulai lalu isi Judul/Artis. Lirik akan berganti otomatis
 sesuai batas yang kamu tandai. Kalau ternyata video itu satu lagu panjang,
 buka 🔍 (judul video sudah terisi) lalu tekan **Cari**.
 
+**Timeline YouTube ("In this video"):** beberapa video kompilasi tidak punya
+Chapters di progress bar, tetapi punya panel **In this video** berisi kartu
+lagu. Saat jendela lirik dibuka, `page-bridge.js` membuka panel itu sebentar
+(tanpa terlihat), membaca kartu lagu, menutupnya lagi, lalu memakai judul,
+artis, dan perkiraan waktu mulainya. Kalau YouTube hanya mengenali sebagian
+lagu, sisa video muncul sebagai segmen **Belum dikenali** — tekan `＋` di awal
+lagu berikutnya atau `⟳ Segarkan dari YouTube` kalau marker YouTube bertambah.
+
 ## Cara kerja
 
 ```
 YouTube page (content script)
 ├── ambil metadata video (judul, artis, durasi)
 ├── chapters dari page-bridge.js (MAIN world) via postMessage
-├── deteksi segmen lagu (Chapters / timestamp deskripsi)
+├── deteksi segmen lagu (Chapters / panel Timeline / timestamp deskripsi)
 ├── mode video panjang kalau tidak ada daftar lagu
 ├── normalisasi judul OST + nama channel resmi
 ├── cari lirik ke lrclib.net (search + get, dengan skor kecocokan)
@@ -170,7 +189,7 @@ Struktur:
 ├── manifest.json
 ├── background.js          # service worker
 ├── content.js             # logika utama + render PiP
-├── page-bridge.js         # baca Chapters dari halaman (MAIN world)
+├── page-bridge.js         # baca Chapters / panel Timeline dari halaman (MAIN world)
 ├── pip.css                # style jendela PiP
 ├── lib/lrc.js             # parser LRC, skor kecocokan, escape HTML
 ├── lib/kana.js            # fast-path romaji kana (tanpa kamus)
@@ -200,8 +219,9 @@ refresh halaman YouTube.
 | Lirik tidak ditemukan | Gunakan 🔍 lalu ketik `Judul Lagu - Nama Artis`; lihat juga [docs/matching.md](docs/matching.md) |
 | Lirik yang muncul lagu lain | Ekstensi menolak skor di bawah 0,5; cari manual lewat 🔍 atau laporkan judul video di issue |
 | Lirik tidak sinkron | Gunakan `-0.1s` / `+0.1s` atau klik kanan pada baris yang benar |
-| Lagu di video kompilasi tidak terdeteksi | Gunakan `＋` pada bar lagu di posisi awal lagu, lalu isi Judul/Artis |
+| Lagu di video kompilasi tidak terdeteksi | Tunggu video diputar beberapa detik (YouTube menyiapkan marker), lalu buka **daftar lagu ▾** → **⟳ Segarkan dari YouTube**. Kalau tetap kosong, tandai manual dengan `＋` |
 | Video panjang menampilkan "Mode video panjang" | Video tidak punya Chapters/tracklist. Tandai lagu dengan `＋`, atau tekan 🔍 (judul video sudah terisi) lalu **Cari** kalau ternyata satu lagu panjang |
+| Hanya sebagian lagu kompilasi terdeteksi | YouTube hanya mengenali sebagian lagu di panel "In this video". Sisa video jadi segmen **Belum dikenali**; tandai lagu berikutnya dengan `＋` saat mulai, atau coba **⟳ Segarkan dari YouTube** |
 | Chapters YouTube belum terbaca | Tunggu video selesai dimuat, lalu muat ulang halaman. Chapters dibaca `page-bridge.js`; kalau tetap kosong, tandai lagu manual dengan `＋` |
 | Lirik kompilasi masih lagu sebelumnya | Pastikan bar lagu menunjukkan lagu yang benar; tekan `✎` untuk memperbaiki judul atau `＋` untuk menandai batas lagu |
 | Offset berubah di lagu lain | Offset disimpan per lagu; atur ulang saat lagu tersebut aktif |

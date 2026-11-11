@@ -6,7 +6,25 @@ dan versi mengikuti [Semantic Versioning](https://semver.org/lang/id/).
 
 ## [Unreleased]
 
-_(belum ada)_
+### Ditambahkan
+- **Deteksi lagu dari panel "In this video" (Timeline YouTube baru)**:
+  `page-bridge.js` membuka panel Timeline sekali di latar belakang (disembunyikan
+  dengan CSS, lalu ditutup lagi), membaca kartu lagu (`videoAttributeViewModel`
+  berisi judul + artis), dan mengirimnya sebagai daftar lagu. Berlaku untuk video
+  kompilasi yang tidak punya Chapters di progress bar dan/atau tidak menulis
+  timestamp di deskripsi.
+- **Segmen "Belum dikenali"** untuk sisa video yang tidak disebut YouTube:
+  kalau hanya sebagian lagu terdeteksi (mis. 10 dari 20 lagu), lagu terakhir
+  tidak lagi dipakai sampai akhir video.
+- **⟳ Segarkan dari YouTube** di daftar lagu: membaca ulang Chapters/Timeline
+  tanpa reload halaman, lalu memuat ulang daftar lagu kalau ada marker baru.
+- **Pemantau tombol "In this video"**: kalau YouTube baru menyiapkan marker
+  setelah beberapa detik, data lagu langsung diambil tanpa perlu reload.
+
+### Diperbaiki
+- Daftar lagu tidak lagi kosong pada video yang hanya punya marker Timeline
+  (sebelumnya ekstensi jatuh ke mode video panjang dan pengguna harus mengisi
+  semua judul manual).
 
 ## [1.4.0] - 2026-11-11
 

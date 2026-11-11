@@ -394,3 +394,152 @@ test('removeSegment menggabungkan waktu ke segmen sebelumnya', () => {
     assert.deepEqual(Segments.removeSegment(list, 0)[0].start, 0);
     assert.deepEqual(Segments.removeSegment([{ start: 0, end: 10 }], 0), []);
 });
+
+test('artistFromCardSubtitle mengambil artis sebelum pemisah kartu', () => {
+    assert.equal(Segments.artistFromCardSubtitle('Tulus • Manusia'), 'Tulus');
+    assert.equal(
+        Segments.artistFromCardSubtitle('Kahitna, Monita Tahalea • Titik Nadir (feat. Monita Tahalea)'),
+        'Kahitna, Monita Tahalea'
+    );
+    assert.equal(Segments.artistFromCardSubtitle('Overnight'), 'Overnight');
+    assert.equal(Segments.artistFromCardSubtitle(''), '');
+    assert.equal(Segments.artistFromCardSubtitle(null), '');
+});
+
+test('parseTimelineMarkers memakai kartu lagu panel "In this video"', () => {
+    // Urutan nyata dari panel Timeline (video kompilasi 84 menit).
+    const items = [
+        { kind: 'card', title: 'Kita Lewati Berdua', subtitle: 'Overnight • Kita Lewati Berdua' },
+        { kind: 'cue', timestamp: '0:03' },
+        { kind: 'cue', timestamp: '0:30' },
+        { kind: 'card', title: 'Teh Hijau', subtitle: 'Tulus • Teh Hijau' },
+        { kind: 'cue', timestamp: '4:04' },
+        { kind: 'cue', timestamp: '4:12' },
+        { kind: 'card', title: 'Jatuh Suka', subtitle: 'Tulus • Manusia' },
+        { kind: 'cue', timestamp: '7:31' }
+    ];
+
+    const entries = Segments.parseTimelineMarkers(items);
+    assert.deepEqual(
+        entries.map((entry) => [entry.start, entry.title, entry.artist, entry.source]),
+        [
+            [0, 'Kita Lewati Berdua', 'Overnight', 'timeline'],
+            [30, 'Teh Hijau', 'Tulus', 'timeline'],
+            [252, 'Jatuh Suka', 'Tulus', 'timeline']
+        ]
+    );
+});
+
+test('parseTimelineMarkers mengabaikan kartu ganda dan item rusak', () => {
+    const items = [
+        { kind: 'cue', timestamp: 100 },
+        { kind: 'card', title: 'Lagu A', subtitle: 'Artis A • Album' },
+        { kind: 'card', title: 'Lagu A duplikat', subtitle: 'Artis A • Album' },
+        { kind: 'card', title: '', subtitle: 'Tanpa judul' },
+        { kind: 'cue', timestamp: '2:00' },
+        { kind: 'card', title: 'Lagu B', subtitle: 'Artis B • Album' },
+        null,
+        { kind: 'lainnya' }
+    ];
+
+    const entries = Segments.parseTimelineMarkers(items);
+    assert.deepEqual(
+        entries.map((entry) => [entry.start, entry.title]),
+        [
+            [100, 'Lagu A'],
+            [120, 'Lagu B']
+        ]
+    );
+    assert.deepEqual(Segments.parseTimelineMarkers(null), []);
+    assert.deepEqual(Segments.parseTimelineMarkers([]), []);
+});
+
+test('trimTrailingUnknown memotong lagu terakhir yang menutupi sisa video', () => {
+    const segments = [
+        { id: 's0', start: 0, end: 210, title: 'A' },
+        { id: 's1', start: 210, end: 420, title: 'B' },
+        { id: 's2', start: 420, end: 630, title: 'C' },
+        { id: 's3', start: 630, end: 5000, title: 'D' }
+    ];
+
+    const result = Segments.trimTrailingUnknown(segments, 5000);
+    assert.equal(result.length, 5);
+    assert.equal(result[3].title, 'D');
+    assert.equal(result[3].start, 630);
+    assert.equal(result[3].end, 840);
+    assert.equal(result[4].title, '');
+    assert.equal(result[4].source, 'unknown');
+    assert.equal(result[4].start, 840);
+    assert.equal(result[4].end, 5000);
+});
+
+test('trimTrailingUnknown membiarkan segmen terakhir yang wajar', () => {
+    const segments = [
+        { id: 's0', start: 0, end: 200, title: 'A' },
+        { id: 's1', start: 200, end: 600, title: 'B' }
+    ];
+    const result = Segments.trimTrailingUnknown(segments, 600);
+    assert.equal(result.length, 2);
+    assert.equal(result[1].end, 600);
+    assert.deepEqual(Segments.trimTrailingUnknown([], 600), []);
+    assert.deepEqual(Segments.trimTrailingUnknown([{ start: 0, end: 100 }], 600), [
+        { start: 0, end: 100 }
+    ]);
+});
+
+test('timeline 10 lagu + sisa video panjang menjadi segmen tanpa judul', () => {
+    // Data nyata panel "In this video" (video 5017 detik, 20 lagu di deskripsi
+    // tapi YouTube hanya mengenali 10 lagu pertama).
+    const items = [
+        { kind: 'card', title: 'Kita Lewati Berdua', subtitle: 'Overnight • Kita Lewati Berdua' },
+        { kind: 'cue', timestamp: '0:03' },
+        { kind: 'cue', timestamp: '3:44' },
+        { kind: 'card', title: 'Teh Hijau', subtitle: 'Tulus • Teh Hijau' },
+        { kind: 'cue', timestamp: '4:04' },
+        { kind: 'cue', timestamp: '7:27' },
+        { kind: 'card', title: 'Jatuh Suka', subtitle: 'Tulus • Manusia' },
+        { kind: 'cue', timestamp: '7:31' },
+        { kind: 'cue', timestamp: '11:13' },
+        { kind: 'card', title: 'Sesi Potret', subtitle: 'eńau • Sesi Potret' },
+        { kind: 'cue', timestamp: '11:31' },
+        { kind: 'cue', timestamp: '15:15' },
+        { kind: 'card', title: 'Dunia Yang Nanti', subtitle: 'Raim Laode • iqro' },
+        { kind: 'cue', timestamp: '15:30' },
+        { kind: 'cue', timestamp: '18:36' },
+        { kind: 'card', title: "Iqro'", subtitle: "Raim Laode • Iqro'" },
+        { kind: 'cue', timestamp: '18:56' },
+        { kind: 'cue', timestamp: '22:37' },
+        { kind: 'card', title: 'Ini Abadi', subtitle: 'Perunggu • Memorandum' },
+        { kind: 'cue', timestamp: '22:50' },
+        { kind: 'cue', timestamp: '26:19' },
+        { kind: 'card', title: 'Titik Nadir', subtitle: 'Kahitna • Titik Nadir' },
+        { kind: 'cue', timestamp: '26:40' },
+        { kind: 'cue', timestamp: '30:26' },
+        { kind: 'card', title: 'Bersenja Gurau', subtitle: 'Raim Laode • Bersenja Gurau' },
+        { kind: 'cue', timestamp: '30:42' },
+        { kind: 'cue', timestamp: '33:50' },
+        { kind: 'card', title: 'bergema sampai selamanya', subtitle: 'Nadhif Basalamah • bergema sampai selamanya' },
+        { kind: 'cue', timestamp: '33:59' }
+    ];
+
+    const entries = Segments.parseTimelineMarkers(items);
+    assert.equal(entries.length, 10);
+    assert.equal(entries[9].title, 'bergema sampai selamanya');
+    assert.equal(entries[9].start, 2030);
+
+    const built = Segments.buildSegments(entries, 5017, { source: 'timeline' });
+    assert.equal(built.length, 10);
+    assert.equal(built[9].start, 2030);
+    assert.equal(built[9].end, 5017);
+
+    const trimmed = Segments.trimTrailingUnknown(built, 5017);
+    assert.equal(trimmed.length, 11);
+    assert.equal(trimmed[9].title, 'bergema sampai selamanya');
+    assert.equal(trimmed[9].end, 2254);
+    assert.equal(trimmed[10].start, 2254);
+    assert.equal(trimmed[10].end, 5017);
+    assert.equal(trimmed[10].title, '');
+    assert.equal(trimmed[10].source, 'unknown');
+});
+
+
