@@ -113,6 +113,11 @@ Detail aturan pencocokan ada di [matching.md](matching.md).
   `segmentsDisabled` supaya tidak muncul lagi. Semua waktu lirik dihitung
   relatif ke awal segmen (`currentTime - segmentBase - offset`), sehingga
   klik-lirik dan Tap Sinkron ikut bergeser per lagu.
+- **Pin ulang jendela lirik:** Chromium dapat menurunkan jendela Document PiP
+  dari level "selalu di atas" setelah aplikasi lain fullscreen. Karena tidak ada
+  API untuk menaikkannya, `Alt+Shift+L` menutup dan membuka ulang jendela PiP
+  dengan ukuran/posisi tersimpan. Handler `pagehide` jendela lama diabaikan
+  kalau jendela baru sudah aktif agar state tidak ter-reset.
 - **Batch 5 (pencocokan):** judul OST diparsing sebelum tanda kurung dibersihkan,
   nama channel resmi diambil dari `parseChannelArtist`, dan hasil pencarian di
   bawah skor 0,5 tidak ditampilkan. Urutan lengkap ada di

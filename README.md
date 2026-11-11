@@ -98,6 +98,8 @@ atas jendela lain saat kamu berpindah aplikasi.
 | ⬇ Ekspor / ⬆ Impor | Backup atau pulihkan cache lirik (JSON) |
 | 🧹 Hapus cache | Hapus cache otomatis & draft (lirik manual dan offset tetap) |
 | `Space` | Play / pause |
+| `Alt+L` | Buka / tutup jendela lirik |
+| `Alt+Shift+L` | Pin ulang jendela lirik agar kembali di atas aplikasi lain |
 | `←` / `→` | Geser offset `-0.1s` / `+0.1s` |
 | `+` / `-` | Perbesar / perkecil font |
 | `Esc` | Tutup menu |
@@ -194,6 +196,7 @@ refresh halaman YouTube.
 | Jendela lirik tidak muncul | Pastikan Brave/Chrome versi 116+ dan ada video yang sedang diputar |
 | Muncul popup biasa, bukan PiP | Browser tidak mendukung Document PiP; popup tetap berfungsi, izinkan popup untuk YouTube |
 | Posisi jendela tidak kembali | Pindahkan/resize jendela, tutup, lalu buka lagi; posisi disimpan otomatis |
+| Jendela lirik tertutup aplikasi lain | Chromium kadang menurunkan PiP dari "selalu di atas" (mis. setelah aplikasi lain fullscreen). Tekan `Alt+Shift+L` untuk pin ulang; jendela dibuka lagi di posisi yang sama tanpa kehilangan lirik. Kalau pintasan belum aktif, atur di `brave://extensions/shortcuts` |
 | Lirik tidak ditemukan | Gunakan 🔍 lalu ketik `Judul Lagu - Nama Artis`; lihat juga [docs/matching.md](docs/matching.md) |
 | Lirik yang muncul lagu lain | Ekstensi menolak skor di bawah 0,5; cari manual lewat 🔍 atau laporkan judul video di issue |
 | Lirik tidak sinkron | Gunakan `-0.1s` / `+0.1s` atau klik kanan pada baris yang benar |

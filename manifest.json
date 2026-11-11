@@ -77,6 +77,12 @@
         "default": "Alt+L"
       },
       "description": "Buka/tutup jendela lirik"
+    },
+    "repin-lyrics": {
+      "suggested_key": {
+        "default": "Alt+Shift+L"
+      },
+      "description": "Muat ulang jendela lirik agar kembali di atas aplikasi lain"
     }
   }
 }

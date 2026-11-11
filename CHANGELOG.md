@@ -64,6 +64,12 @@ _(belum ada)_
   Sekarang Chapters diambil oleh `page-bridge.js` di MAIN world.
 - Segmen placeholder "video panjang" tidak ikut disimpan, jadi menghapusnya
   (`segmentsDisabled`) tetap mengembalikan video ke mode satu lagu.
+- **Jendela lirik kadang tertutup aplikasi lain**: Chromium bisa menurunkan
+  jendela Document PiP dari level "selalu di atas" (misalnya setelah aplikasi
+  lain masuk fullscreen), dan tidak ada API untuk menaikkannya kembali.
+  Pintasan **`Alt+Shift+L`** menutup lalu membuka ulang jendela PiP di posisi
+  dan ukuran yang sama; lirik, offset, dan segmen tetap karena tersimpan per
+  video.
 - **Tap Sinkron** sekarang menyimpan waktu relatif terhadap offset lirik, jadi
   hasil tap tidak bergeser kalau offset pernah dikalibrasi.
 - Baris yang belum ditandai saat Tap Sinkron tidak lagi diberi timestamp `0`;

@@ -3838,6 +3838,10 @@ if (window === window.top) {
             });
 
             win.addEventListener('pagehide', () => {
+                // Jendela lama yang diganti lewat "pin ulang" tidak boleh
+                // mereset state jendela baru.
+                if (pipWindow !== win) return;
+
                 savePipBounds(true);
                 clearTimeout(pipBoundsSaveTimer);
                 pipBoundsSaveTimer = null;
@@ -3939,19 +3943,7 @@ if (window === window.top) {
             }
         }
 
-        function toggleLyricsPiP() {
-            if (pipWindow) {
-                pipWindow.close();
-                return;
-            }
-
-            videoElement = getVideoElement();
-            if (!videoElement) {
-                pageToast('Tidak ada video yang sedang diputar.');
-                return;
-            }
-
-            const savedBounds = clampBounds(settings.pipBounds);
+        function requestLyricsWindow(savedBounds) {
             const width = savedBounds ? savedBounds.width : 360;
             const height = savedBounds ? savedBounds.height : 560;
 
@@ -3993,12 +3985,69 @@ if (window === window.top) {
             bootLyricsWindow(win, savedBounds);
         }
 
+        function toggleLyricsPiP() {
+            if (pipWindow) {
+                pipWindow.close();
+                return;
+            }
+
+            videoElement = getVideoElement();
+            if (!videoElement) {
+                pageToast('Tidak ada video yang sedang diputar.');
+                return;
+            }
+
+            requestLyricsWindow(clampBounds(settings.pipBounds));
+        }
+
+        // Chromium kadang menurunkan jendela PiP dari level "selalu di atas"
+        // (misalnya setelah aplikasi lain fullscreen). Tidak ada API untuk
+        // menaikkannya kembali, jadi jendela ditutup lalu dibuka ulang dengan
+        // ukuran/posisi yang sama. Data lirik tetap karena tersimpan per video.
+        function repinLyricsPiP() {
+            if (!pipWindow) {
+                toggleLyricsPiP();
+                return;
+            }
+
+            videoElement = getVideoElement();
+            if (!videoElement) {
+                pageToast('Tidak ada video yang sedang diputar.');
+                return;
+            }
+
+            savePipBounds(true);
+            flushOffset();
+            const savedBounds = clampBounds(settings.pipBounds);
+            const current = pipWindow;
+            let reopened = false;
+            const reopen = () => {
+                if (reopened) return;
+                reopened = true;
+                requestLyricsWindow(savedBounds);
+            };
+
+            // Buka lagi segera setelah jendela lama benar-benar tertutup.
+            current.addEventListener('pagehide', () => setTimeout(reopen, 0), { once: true });
+            try {
+                current.close();
+            } catch (error) {
+                reopen();
+                return;
+            }
+            // Jaga-jaga kalau pagehide tidak terpanggil.
+            setTimeout(reopen, 400);
+        }
+
         // ==========================================
         // EVENT GLOBAL
         // ==========================================
         chrome.runtime.onMessage.addListener((request) => {
-            if (request && request.action === 'toggle_lyrics') {
+            if (!request) return;
+            if (request.action === 'toggle_lyrics') {
                 toggleLyricsPiP();
+            } else if (request.action === 'repin_lyrics') {
+                repinLyricsPiP();
             }
         });
 
