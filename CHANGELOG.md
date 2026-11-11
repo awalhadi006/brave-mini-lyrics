@@ -6,7 +6,24 @@ dan versi mengikuti [Semantic Versioning](https://semver.org/lang/id/).
 
 ## [Unreleased]
 
+_(belum ada)_
+
+## [1.4.0] - 2026-11-11
+
 ### Ditambahkan
+- **Dukungan video kompilasi / mix multi-lagu**: batas lagu dideteksi dari
+  Chapters YouTube, lalu fallback ke timestamp di deskripsi. Lirik berpindah
+  otomatis saat lagu berganti, dengan offset, lirik manual, dan cache yang
+  disimpan **per lagu**.
+- **Bar lagu** di jendela PiP: `‹` / `›` untuk pindah lagu, label lagu aktif,
+  `✎` untuk mengedit, dan `＋` untuk menandai lagu baru di posisi video saat ini.
+- **Penanda lagu manual** lewat dialog Judul/Artis/Mulai; segmen sebelumnya
+  otomatis dipotong, dan lagu baru bisa dihapus (waktunya digabung ke lagu
+  sebelumnya). Hasil edit tidak ditimpa deteksi otomatis saat halaman dimuat ulang.
+- **Pencarian lazy + prefetch** per segmen: lirik lagu berikutnya disiapkan di
+  belakang layar supaya pergantian lagu tidak menunggu.
+- **Peringatan "menunggu lagu"** saat posisi video berada di jeda antar segmen,
+  dan tampilan **"lagu tanpa judul"** untuk segmen yang belum diberi nama.
 - **Progress bar pencarian** dengan persentase langkah, status sumber yang
   sedang dicari, dan penghitung waktu berjalan. Bar beranimasi saat persentase
   belum diketahui, lalu berhenti di 100% saat hasil ditemukan.

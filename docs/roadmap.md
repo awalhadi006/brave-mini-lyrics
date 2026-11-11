@@ -45,20 +45,22 @@ Masalahnya: video kompilasi/mix berisi banyak lagu dalam satu video, sehingga
 durasi video tidak bisa dipakai sebagai durasi lagu dan `videoId` tidak berubah
 saat lagu berganti.
 
+Status: **selesai** di [1.4.0](../CHANGELOG.md).
+
 | # | Fitur / perbaikan | Status |
 |---|---|---|
-| — | Deteksi batas lagu dari Chapters YouTube / timestamp deskripsi | rencana |
-| — | Model data `segments` (mulai/akhir, judul, artis, offset per lagu) | rencana |
-| — | Timeline multi-lagu: lirik digeser per segmen dan dipotong di batas lagu | rencana |
-| — | Penanda lagu manual (`＋ Tandai lagu`) untuk mix tanpa metadata | rencana |
-| — | Pencarian lazy + cache per segmen | rencana |
-| — | Peringatan "video kompilasi terdeteksi" agar auto-search tidak salah lagu | rencana |
+| — | Deteksi batas lagu dari Chapters YouTube / timestamp deskripsi | selesai |
+| — | Model data `segments` (mulai/akhir, judul, artis, offset per lagu) | selesai |
+| — | Timeline multi-lagu: lirik digeser per segmen dan dipotong di batas lagu | selesai |
+| — | Penanda lagu manual (`＋ Tandai lagu`) untuk mix tanpa metadata | selesai |
+| — | Pencarian lazy + cache per segmen | selesai |
+| — | Peringatan "video kompilasi terdeteksi" agar auto-search tidak salah lagu | selesai |
 
 Audio recognition (Shazam/ACRCloud/AudD) **tidak** direncanakan: audio harus
 dikirim ke pihak ketiga (melanggar janji privasi di README) dan menangkap audio
 tab YouTube butuh `tabCapture` + offscreen document.
 
-## Batch 5 — Perbaikan UX & pencocokan (Unreleased)
+## Batch 5 — Perbaikan UX & pencocokan (1.4.0)
 
 | # | Fitur / perbaikan | Status |
 |---|---|---|
@@ -93,8 +95,14 @@ Detail aturan pencocokan ada di [matching.md](matching.md).
   mengembalikan data terenkripsi.
 - **Batch 4 (segments):** batas lagu diambil dari `playerResponse.engagementPanels`
   → `macroMarkersListRenderer` (Chapters), lalu fallback ke timestamp di
-  deskripsi. Video tanpa `segments` tetap memakai jalur single-track; offset
-  global hanya dipakai saat segmen tidak aktif supaya offset tidak dobel.
+  deskripsi. Segmen disimpan per video di `bml:v2:video:<videoId>` beserta
+  lirik/offset masing-masing. Saat video dimuat ulang, hasil deteksi baru
+  digabung dengan segmen tersimpan berdasarkan awal ±1,5 detik agar lirik dan
+  offset tidak hilang. Begitu pengguna mengedit/menandai lagu, flag
+  `segmentsEdited` mengunci hasil deteksi; menghapus semua segmen memasang
+  `segmentsDisabled` supaya tidak muncul lagi. Semua waktu lirik dihitung
+  relatif ke awal segmen (`currentTime - segmentBase - offset`), sehingga
+  klik-lirik dan Tap Sinkron ikut bergeser per lagu.
 - **Batch 5 (pencocokan):** judul OST diparsing sebelum tanda kurung dibersihkan,
   nama channel resmi diambil dari `parseChannelArtist`, dan hasil pencarian di
   bawah skor 0,5 tidak ditampilkan. Urutan lengkap ada di

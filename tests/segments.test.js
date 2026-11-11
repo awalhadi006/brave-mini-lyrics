@@ -221,3 +221,153 @@ test('findSegmentIndex menghormati batas segmen dan jeda', () => {
     assert.equal(Segments.findSegmentIndex(segments, 200), -1);
     assert.equal(Segments.findSegmentIndex([], 10), -1);
 });
+
+test('addSegment memecah video satu lagu menjadi dua segmen', () => {
+    const result = Segments.addSegment([], {
+        start: 180,
+        title: 'Lagu Baru',
+        artist: 'Artis Baru'
+    }, { duration: 400, fallbackTitle: 'Judul Video', fallbackArtist: 'Channel' });
+
+    assert.deepEqual(
+        result.map((segment) => [segment.start, segment.end, segment.title, segment.artist]),
+        [
+            [0, 180, 'Judul Video', 'Channel'],
+            [180, 400, 'Lagu Baru', 'Artis Baru']
+        ]
+    );
+});
+
+test('addSegment memecah segmen di tengah dan mempertahankan lirik lama', () => {
+    const existing = [
+        { id: 's0', start: 0, end: 200, title: 'Lagu A', artist: 'A', autoData: { trackName: 'A' }, autoCachedAt: 123 }
+    ];
+    const result = Segments.addSegment(existing, { start: 120, title: 'Lagu B', artist: 'B' }, { duration: 400 });
+
+    assert.deepEqual(
+        result.map((segment) => [segment.start, segment.end, segment.title]),
+        [
+            [0, 120, 'Lagu A'],
+            [120, 200, 'Lagu B']
+        ]
+    );
+    assert.equal(result[0].autoCachedAt, 123);
+});
+
+test('addSegment mengganti judul kalau titik terlalu dekat awal segmen', () => {
+    const existing = [{ id: 's0', start: 0, end: 200, title: 'Lagu A', artist: 'A' }];
+    const result = Segments.addSegment(existing, { start: 5, title: 'Lagu B', artist: 'B' }, { duration: 400 });
+    assert.equal(result.length, 1);
+    assert.equal(result[0].title, 'Lagu B');
+});
+
+test('addSegment menambahkan lagu setelah segmen terakhir', () => {
+    const existing = [{ id: 's0', start: 0, end: 200, title: 'Lagu A', artist: 'A' }];
+    const result = Segments.addSegment(existing, { start: 260, title: 'Lagu B', artist: 'B' }, { duration: 400 });
+    assert.deepEqual(
+        result.map((segment) => [segment.start, segment.end]),
+        [
+            [0, 200],
+            [260, 400]
+        ]
+    );
+});
+
+test('addSegment di batas segmen tidak membuat segmen berdurasi nol', () => {
+    const existing = [
+        { id: 's0', start: 0, end: 200, title: 'Lagu A', artist: 'A' },
+        { id: 's1', start: 200, end: 400, title: 'Lagu B', artist: 'B' }
+    ];
+    const result = Segments.addSegment(existing, { start: 200, title: 'Lagu C', artist: 'C' }, { duration: 400 });
+    assert.equal(result.length, 2);
+    assert.deepEqual(
+        result.map((segment) => [segment.start, segment.end, segment.title]),
+        [
+            [0, 200, 'Lagu A'],
+            [200, 400, 'Lagu C']
+        ]
+    );
+});
+
+test('addSegment menyisipkan lagu di celah sesuai urutan waktu', () => {
+    const existing = [
+        { id: 's0', start: 100, end: 200, title: 'Lagu A', artist: 'A' },
+        { id: 's1', start: 250, end: 300, title: 'Lagu B', artist: 'B' }
+    ];
+    const result = Segments.addSegment(existing, { start: 50, title: 'Intro', artist: 'C' }, { duration: 300 });
+    assert.deepEqual(
+        result.map((segment) => [segment.start, segment.end, segment.title]),
+        [
+            [50, 100, 'Intro'],
+            [100, 200, 'Lagu A'],
+            [250, 300, 'Lagu B']
+        ]
+    );
+});
+
+test('updateSegment menggeser awal tanpa menabrak segmen sebelumnya', () => {
+    const list = [
+        { id: 's0', start: 0, end: 100, title: 'A' },
+        { id: 's1', start: 100, end: 200, title: 'B' }
+    ];
+    const result = Segments.updateSegment(list, 1, { start: 5, title: 'Baru' }, { minLength: 15 });
+    assert.equal(result[1].start, 15);
+    assert.equal(result[0].end, 15);
+    assert.equal(result[1].title, 'Baru');
+});
+
+test('updateSegment membuang cache otomatis saat judul berubah', () => {
+    const list = [
+        {
+            id: 's0',
+            start: 0,
+            end: 100,
+            title: 'Lagu A',
+            artist: 'A',
+            autoData: { trackName: 'Lagu A' },
+            autoCachedAt: 999,
+            manualData: { trackName: 'Manual' }
+        }
+    ];
+    const result = Segments.updateSegment(list, 0, { title: 'Lagu B' }, { minLength: 15 });
+    assert.equal(result[0].autoData, null);
+    assert.equal(result[0].autoCachedAt, 0);
+    assert.deepEqual(result[0].manualData, { trackName: 'Manual' });
+    assert.equal(result[0].edited, true);
+});
+
+test('updateSegment mempertahankan cache kalau judul/artis tidak berubah', () => {
+    const list = [
+        {
+            id: 's0',
+            start: 0,
+            end: 100,
+            title: 'Lagu A',
+            artist: 'A',
+            autoData: { trackName: 'Lagu A' },
+            autoCachedAt: 999
+        }
+    ];
+    const result = Segments.updateSegment(list, 0, { title: 'Lagu A', artist: 'A' });
+    assert.deepEqual(result[0].autoData, { trackName: 'Lagu A' });
+    assert.equal(result[0].autoCachedAt, 999);
+    assert.equal(result[0].edited, undefined);
+});
+
+test('removeSegment menggabungkan waktu ke segmen sebelumnya', () => {
+    const list = [
+        { id: 's0', start: 0, end: 100, title: 'A' },
+        { id: 's1', start: 100, end: 200, title: 'B' },
+        { id: 's2', start: 200, end: 300, title: 'C' }
+    ];
+    const result = Segments.removeSegment(list, 1);
+    assert.deepEqual(
+        result.map((segment) => [segment.id, segment.start, segment.end, segment.title]),
+        [
+            ['s0', 0, 200, 'A'],
+            ['s1', 200, 300, 'C']
+        ]
+    );
+    assert.deepEqual(Segments.removeSegment(list, 0)[0].start, 0);
+    assert.deepEqual(Segments.removeSegment([{ start: 0, end: 10 }], 0), []);
+});

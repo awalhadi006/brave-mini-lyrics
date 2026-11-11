@@ -12,6 +12,11 @@ atas jendela lain saat kamu berpindah aplikasi.
 
 - **Lirik tersinkron (LRC)** dengan highlight baris aktif dan auto-scroll.
 - **Otomatis mengikuti pergantian lagu** di YouTube (next, autoplay, back/forward).
+- **Video kompilasi / mix multi-lagu** — batas lagu dideteksi dari Chapters
+  YouTube atau timestamp di deskripsi. Lirik, offset, dan cache disimpan per
+  lagu; lagu berganti otomatis mengikuti posisi video. Ada bar lagu `‹ ›`,
+  tombol `＋` untuk menandai lagu baru secara manual, dan prefetch lirik lagu
+  berikutnya supaya perpindahan terasa instan.
 - **Mode karaoke/ringkas** — hanya satu baris lirik besar di tengah.
 - **Kalibrasi offset** `±0.1s` dan kalibrasi instan dengan klik kanan pada baris.
 - **Pencarian otomatis & manual** dengan pencocokan judul, artis, dan durasi.
@@ -70,6 +75,9 @@ atas jendela lain saat kamu berpindah aplikasi.
 | Klik panah lagi / `Esc` | Kunci atau tutup menu |
 | Klik baris lirik | Lompat ke bagian lagu tersebut |
 | Klik kanan baris lirik | Kalibrasi offset instan |
+| `‹` / `›` di bar lagu | Pindah ke lagu sebelumnya / berikutnya (video kompilasi) |
+| `✎` di bar lagu | Edit judul, artis, atau waktu mulai lagu aktif |
+| `＋` di bar lagu / header | Tandai lagu baru pada posisi video saat ini |
 | `-0.1s` / `+0.1s` | Geser sinkronisasi lirik |
 | 🎤 | Mode karaoke (satu baris besar) |
 | 🔤 | Ubah lirik Jepang/Korea/China ke huruf Latin |
@@ -94,13 +102,14 @@ atas jendela lain saat kamu berpindah aplikasi.
 ```
 YouTube page (content script)
 ├── ambil metadata video (judul, artis, durasi)
+├── deteksi segmen lagu (Chapters / timestamp deskripsi)
 ├── normalisasi judul OST + nama channel resmi
 ├── cari lirik ke lrclib.net (search + get, dengan skor kecocokan)
 ├── fallback ke NetEase / QQ Music lewat service worker
-├── simpan ke chrome.storage.local (per videoId)
+├── simpan ke chrome.storage.local (per videoId, lirik per segmen)
 ├── parse LRC -> daftar {time, text}
-├── ikuti timeupdate video -> highlight baris aktif
-├── editor lirik manual + tap-sync + draft otomatis (per video)
+├── ikuti timeupdate video -> highlight baris aktif (relatif ke awal segmen)
+├── editor lirik manual + tap-sync + draft otomatis (per video/lagu)
 └── render ke jendela Document PiP (HTML + CSS sendiri)
 
 background service worker
@@ -122,7 +131,7 @@ background service worker
 ## Pengembangan
 
 ```bash
-npm test        # unit test untuk parser LRC, skor kecocokan, dan kana
+npm test        # unit test untuk parser LRC, skor kecocokan, kana, dan segmen
 npm run check   # syntax check file JS
 npm run e2e     # smoke test PiP di Brave/Chromium headless
 node scripts/make-icons.js   # regenerate icon PNG
@@ -175,6 +184,9 @@ refresh halaman YouTube.
 | Lirik tidak ditemukan | Gunakan 🔍 lalu ketik `Judul Lagu - Nama Artis`; lihat juga [docs/matching.md](docs/matching.md) |
 | Lirik yang muncul lagu lain | Ekstensi menolak skor di bawah 0,5; cari manual lewat 🔍 atau laporkan judul video di issue |
 | Lirik tidak sinkron | Gunakan `-0.1s` / `+0.1s` atau klik kanan pada baris yang benar |
+| Lagu di video kompilasi tidak terdeteksi | Gunakan `＋` pada bar lagu di posisi awal lagu, lalu isi Judul/Artis |
+| Lirik kompilasi masih lagu sebelumnya | Pastikan bar lagu menunjukkan lagu yang benar; tekan `✎` untuk memperbaiki judul atau `＋` untuk menandai batas lagu |
+| Offset berubah di lagu lain | Offset disimpan per lagu; atur ulang saat lagu tersebut aktif |
 | Lirik salah versi | Klik 🔍 dan pilih versi lain, atau ↻ untuk cari ulang |
 | Lirik salah ketik / ada bagian yang mau dihapus | Klik ✎, perbaiki, lalu **Simpan**. **Hapus manual** mengembalikan hasil otomatis |
 | Lirik statis belum sinkron | Klik ✎ → **🎯 Tap Sinkron**, putar lagu, tekan TAP tepat di awal tiap baris |
