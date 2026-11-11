@@ -150,6 +150,7 @@ Struktur:
 ├── pip.css                # style jendela PiP
 ├── lib/lrc.js             # parser LRC, skor kecocokan, escape HTML
 ├── lib/kana.js            # fast-path romaji kana (tanpa kamus)
+├── lib/segments.js        # deteksi batas lagu video kompilasi (Batch 4)
 ├── dict/                  # kamus Kuromoji (romanisasi Jepang)
 ├── kuroshiro*.js          # library romanisasi
 ├── icons/                 # icon ekstensi (hasil generator)

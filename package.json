@@ -6,7 +6,7 @@
   "license": "MIT",
   "scripts": {
     "test": "node --test \"tests/**/*.test.js\"",
-    "check": "node --check content.js && node --check background.js && node --check lib/lrc.js && node --check lib/kana.js && node --check scripts/e2e.js",
+    "check": "node --check content.js && node --check background.js && node --check lib/lrc.js && node --check lib/kana.js && node --check lib/segments.js && node --check scripts/e2e.js",
     "e2e": "node scripts/e2e.js"
   }
 }

@@ -5,9 +5,11 @@ if (window === window.top) {
 
     const Core = globalThis.BMLCore;
     const Kana = globalThis.BMLKana;
+    const Segments = globalThis.BMLSegments;
     if (!Core) {
         console.error('Brave Mini Lyrics: lib/lrc.js belum termuat.');
     } else {
+        if (!Segments) console.warn('Brave Mini Lyrics: lib/segments.js belum termuat.');
         run();
     }
 
@@ -124,7 +126,8 @@ if (window === window.top) {
                 manualData: null,
                 autoData: null,
                 autoCachedAt: 0,
-                latinData: null
+                latinData: null,
+                segments: []
             };
             if (!videoId) return defaults;
             try {
@@ -148,7 +151,8 @@ if (window === window.top) {
                         manualData: null,
                         autoData: null,
                         autoCachedAt: 0,
-                        latinData: null
+                        latinData: null,
+                        segments: []
                     },
                     obj[key] || {},
                     patch,
@@ -449,6 +453,174 @@ if (window === window.top) {
                 series: ost.series,
                 duration: duration
             };
+        }
+
+        // ==========================================
+        // SEGMEN VIDEO KOMPILASI (Batch 4)
+        // ==========================================
+        // Video kompilasi/mix berisi banyak lagu dalam satu video. Batas lagu
+        // diambil dari Chapters YouTube, lalu fallback ke timestamp di deskripsi.
+        // Pada tahap ini hasilnya baru dideteksi dan disimpan; pemakaian untuk
+        // render lirik multi-lagu dikerjakan pada tahap berikutnya.
+        const CHAPTER_NODE_LIMIT = 20000;
+        let segmentsCache = { key: '', segments: [] };
+
+        function getPlayerResponse() {
+            try {
+                const app = document.querySelector('ytd-app');
+                const raw = app && (app.__data || app.data);
+                const appData = raw && (raw.data || raw);
+                if (!appData) return null;
+                if (
+                    appData.player &&
+                    appData.player.args &&
+                    appData.player.args.raw_player_response
+                ) {
+                    return appData.player.args.raw_player_response;
+                }
+                return appData.playerResponse || null;
+            } catch (error) {
+                // struktur data YouTube bisa berubah: abaikan
+                return null;
+            }
+        }
+
+        // Cari node `macroMarkersListItemRenderer` (Chapters) tanpa menelusuri
+        // seluruh objek raksasa YouTube.
+        function collectChapterEntries(root) {
+            if (!Segments || !root || typeof root !== 'object') return [];
+            const found = [];
+            const stack = [{ node: root, depth: 0 }];
+            let visited = 0;
+
+            while (stack.length > 0) {
+                const item = stack.pop();
+                if (!item.node || typeof item.node !== 'object') continue;
+                if (item.depth > 14) continue;
+                visited += 1;
+                if (visited > CHAPTER_NODE_LIMIT) break;
+
+                if (Array.isArray(item.node)) {
+                    for (const child of item.node) {
+                        if (child && typeof child === 'object') {
+                            stack.push({ node: child, depth: item.depth + 1 });
+                        }
+                    }
+                    continue;
+                }
+
+                if (item.node.macroMarkersListItemRenderer) {
+                    found.push(item.node.macroMarkersListItemRenderer);
+                    continue;
+                }
+
+                for (const key of Object.keys(item.node)) {
+                    const child = item.node[key];
+                    if (child && typeof child === 'object') {
+                        stack.push({ node: child, depth: item.depth + 1 });
+                    }
+                }
+            }
+
+            return found;
+        }
+
+        function getVideoChapterData() {
+            if (!Segments) return [];
+
+            const player = getPlayerResponse();
+            if (player) {
+                const fromPlayer = Segments.normalizeChapters(
+                    collectChapterEntries(player.engagementPanels)
+                );
+                if (fromPlayer.length >= 2) return fromPlayer;
+            }
+
+            try {
+                const fromPage = Segments.normalizeChapters(
+                    collectChapterEntries(window.ytInitialData)
+                );
+                if (fromPage.length >= 2) return fromPage;
+            } catch (error) {
+                // ytInitialData bisa berubah/ tidak tersedia: abaikan
+            }
+
+            return [];
+        }
+
+        function getVideoDescriptionText() {
+            const element = document.querySelector(
+                '#description-inline-expander, ytd-text-inline-expander#description-inline-expander, #description'
+            );
+            const fromPage = element ? element.innerText || element.textContent || '' : '';
+            if (fromPage.trim()) return fromPage;
+
+            const player = getPlayerResponse();
+            const details = player && player.videoDetails;
+            return (details && details.shortDescription) || '';
+        }
+
+        function segmentsSignature(segments) {
+            return (segments || [])
+                .map((segment) =>
+                    [
+                        segment.id,
+                        Math.round(Number(segment.start) * 10) / 10,
+                        Math.round(Number(segment.end) * 10) / 10,
+                        segment.title || '',
+                        segment.artist || '',
+                        segment.source || ''
+                    ].join('|')
+                )
+                .join('\n');
+        }
+
+        function getVideoSegments(meta) {
+            if (!Segments) return [];
+
+            const videoId = getVideoId() || '';
+            const duration = Math.round(Number(meta && meta.duration) || 0);
+            const key = videoId + ':' + duration;
+            if (segmentsCache.key === key) return segmentsCache.segments;
+
+            const chapterEntries = getVideoChapterData();
+            const description = getVideoDescriptionText();
+
+            let entries = chapterEntries;
+            let source = 'chapter';
+            if (entries.length < 2) {
+                entries = Segments.parseTracklist(description, { duration: duration });
+                source = 'description';
+            }
+
+            let segments =
+                entries.length >= 2
+                    ? Segments.buildSegments(entries, duration, {
+                          source: source,
+                          channel: (meta && (meta.searchArtist || meta.artist)) || ''
+                      })
+                    : [];
+
+            const compilation = Segments.isCompilationVideo({
+                title: (meta && meta.title) || '',
+                description: description,
+                duration: duration,
+                segments: segments
+            });
+
+            if (!compilation) segments = [];
+
+            segmentsCache = { key: key, segments: segments };
+            if (segments.length > 0) {
+                console.info(
+                    'Brave Mini Lyrics: ' +
+                        segments.length +
+                        ' segmen lagu terdeteksi (' +
+                        source +
+                        ').'
+                );
+            }
+            return segments;
         }
 
         // ==========================================
@@ -2444,6 +2616,18 @@ if (window === window.top) {
                 return;
             }
             currentVideoData = saved;
+
+            // Deteksi segmen untuk video kompilasi. Hasilnya disimpan agar bisa
+            // dipakai tahap render multi-lagu berikutnya.
+            if (videoId) {
+                const segments = getVideoSegments(meta);
+                if (
+                    segments.length > 0 &&
+                    segmentsSignature(saved.segments) !== segmentsSignature(segments)
+                ) {
+                    saveVideoData(videoId, { segments: segments });
+                }
+            }
 
             const report = (message, progress) => {
                 if (token === loadToken) updateLoadingStatus(message, progress);

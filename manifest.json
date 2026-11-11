@@ -43,6 +43,7 @@
         "kuroshiro-analyzer-kuromoji.min.js",
         "lib/lrc.js",
         "lib/kana.js",
+        "lib/segments.js",
         "content.js"
       ],
       "run_at": "document_idle"
