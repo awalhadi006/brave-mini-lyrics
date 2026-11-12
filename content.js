@@ -85,6 +85,8 @@ if (window === window.top) {
         let segmentBase = 0;
         let segmentSwitchTimer = null;
         let prefetchInFlight = {};
+        let refreshConfirmAt = 0;
+        let bridgeNoticeFor = '';
 
         const kuroshiroPromise = { current: null };
 
@@ -696,6 +698,23 @@ if (window === window.top) {
                 };
                 segmentsCache.key = '';
                 maybeUpgradeLongVideo(chapterBridge.chapters);
+
+                // Pengguna sudah punya daftar lagu manual: beri tahu bahwa
+                // YouTube sekarang punya daftar resmi yang bisa dipakai.
+                if (
+                    chapterBridge.chapters.length >= 2 &&
+                    segmentsEdited &&
+                    pipWindow &&
+                    chapterBridge.videoId &&
+                    bridgeNoticeFor !== chapterBridge.videoId
+                ) {
+                    bridgeNoticeFor = chapterBridge.videoId;
+                    toast(
+                        'YouTube menemukan ' +
+                            chapterBridge.chapters.length +
+                            ' lagu. Buka daftar lagu lalu tekan ⟳ 2× untuk memakainya'
+                    );
+                }
             });
         }
 
@@ -728,10 +747,25 @@ if (window === window.top) {
         async function refreshSegmentsFromPage() {
             const videoId = getVideoId();
             if (!videoId) return;
-            if (segmentsEdited || segmentsDisabled) {
-                toast('Daftar lagu sudah diedit manual, deteksi ulang dilewati');
+            if (segmentsDisabled) {
+                toast('Daftar lagu untuk video ini dinonaktifkan');
                 return;
             }
+
+            // Daftar hasil edit manual tidak ditimpa tanpa konfirmasi:
+            // tekan tombol ⟳ dua kali dalam 6 detik.
+            let replaceManual = false;
+            if (segmentsEdited) {
+                if (Date.now() - refreshConfirmAt > 6000) {
+                    refreshConfirmAt = Date.now();
+                    toast('Tekan ⟳ sekali lagi untuk mengganti daftar lagu manual');
+                    return;
+                }
+                refreshConfirmAt = 0;
+                replaceManual = true;
+            }
+
+            const manual = replaceManual ? normalizeStoredSegments(segments) : [];
 
             closeSegmentList();
             chapterBridge = { videoId: '', chapters: [], source: '', at: 0 };
@@ -739,17 +773,69 @@ if (window === window.top) {
             requestPageChapters();
             toast('Mencari daftar lagu dari YouTube…');
 
-            const chapters = await waitForBridgeChapters(videoId, 12000);
-            if (segmentsEdited || segmentsDisabled) return;
+            const chapters =
+                (await waitForBridgeChapters(videoId, 22000)) ||
+                (chapterBridge.videoId === videoId ? chapterBridge.chapters : []);
             if (!chapters || chapters.length < 2) {
                 toast('YouTube belum menyediakan daftar lagu untuk video ini');
                 return;
             }
 
+            const meta = getVideoMetadata();
             segmentsCache = { key: '', segments: [] };
             bridgeUpgradeSignature = '';
+
+            const fresh = getVideoSegments(
+                meta,
+                Object.assign({}, currentVideoData, { segmentsEdited: false, segments: [] })
+            );
+            if (!Array.isArray(fresh) || fresh.length < 2) {
+                toast('YouTube belum menyediakan daftar lagu untuk video ini');
+                return;
+            }
+
+            const carried = manual.length > 0 ? carryOverManualTitles(fresh, manual) : 0;
+            segments = fresh;
+            segmentsEdited = carried > 0;
+            currentVideoData = Object.assign({}, currentVideoData, { segments: fresh });
+            await saveVideoData(videoId, {
+                segments: fresh,
+                segmentsEdited: segmentsEdited
+            });
+
             await loadLyricsToPiP(null, null);
-            toast(chapters.length + ' lagu ditemukan dari YouTube');
+            toast(
+                chapters.length +
+                    ' lagu ditemukan dari YouTube' +
+                    (carried > 0 ? ' (' + carried + ' judul manual dipertahankan)' : '')
+            );
+        }
+
+        // Pertahankan judul/artis yang diketik pengguna saat daftar lagu
+        // otomatis diterapkan ulang: cari segmen dengan waktu mulai terdekat.
+        function carryOverManualTitles(fresh, manual) {
+            let carried = 0;
+            for (const old of manual) {
+                if (!old || !old.title) continue;
+                let best = null;
+                let bestDelta = Infinity;
+                for (const segment of fresh) {
+                    const delta = Math.abs(Number(segment.start) - Number(old.start));
+                    if (delta < bestDelta) {
+                        bestDelta = delta;
+                        best = segment;
+                    }
+                }
+                if (!best || bestDelta > 15) continue;
+                if (best.title) continue;
+                best.title = old.title;
+                best.artist = old.artist || best.artist || '';
+                best.offset = Number(old.offset) || 0;
+                best.manualData = old.manualData || best.manualData || null;
+                best.edited = true;
+                carried += 1;
+            }
+            return carried;
         }
 
         function normalizeStoredSegments(list) {

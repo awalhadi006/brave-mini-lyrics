@@ -18,13 +18,22 @@ dan versi mengikuti [Semantic Versioning](https://semver.org/lang/id/).
   tidak lagi dipakai sampai akhir video.
 - **⟳ Segarkan dari YouTube** di daftar lagu: membaca ulang Chapters/Timeline
   tanpa reload halaman, lalu memuat ulang daftar lagu kalau ada marker baru.
+  Kalau daftar lagu sudah pernah diedit manual, tekan `⟳` **dua kali** untuk
+  menggantinya; judul manual yang posisinya berdekatan tetap dipertahankan.
 - **Pemantau tombol "In this video"**: kalau YouTube baru menyiapkan marker
   setelah beberapa detik, data lagu langsung diambil tanpa perlu reload.
 
 ### Diperbaiki
+- **Deteksi Timeline sekarang benar-benar otomatis.** Sebelumnya panel hanya
+  dibuka saat content script meminta (dan permintaan itu datang sebelum tombol
+  "In this video" ada), sehingga pengguna harus mengisi judul manual. Sekarang
+  `page-bridge.js` membuka panel sendiri begitu tombol muncul (retry + pemantau
+  DOM sampai 5 menit), lalu menutupnya lagi.
 - Daftar lagu tidak lagi kosong pada video yang hanya punya marker Timeline
   (sebelumnya ekstensi jatuh ke mode video panjang dan pengguna harus mengisi
   semua judul manual).
+- Kalau pengguna sudah punya daftar manual, muncul pemberitahuan bahwa YouTube
+  menyediakan daftar lagu beserta cara memakainya (`⟳` dua kali).
 
 ## [1.4.0] - 2026-11-11
 

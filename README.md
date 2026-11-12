@@ -20,8 +20,9 @@ atas jendela lain saat kamu berpindah aplikasi.
   bisa diklik untuk melompat ke waktu mulainya.
 - **Timeline YouTube baru** — kalau YouTube hanya menampilkan panel "In this
   video" (bukan Chapters di progress bar), ekstensi membuka panel itu sebentar
-  di latar belakang, membaca kartu lagu (judul + artis + perkiraan waktu), lalu
-  menutupnya lagi. Tidak ada audio yang direkam atau dikirim.
+  di latar belakang **secara otomatis** begitu tombolnya muncul, membaca kartu
+  lagu (judul + artis + perkiraan waktu), lalu menutupnya lagi. Tidak ada audio
+  yang direkam atau dikirim. Tidak perlu mengisi judul manual.
 - **Sisa video yang belum dikenali** — kalau YouTube hanya mengenali sebagian
   lagu (mis. 10 dari 20 lagu), sisa video jadi satu segmen **Belum dikenali**
   supaya lirik lagu terakhir tidak dipakai sampai akhir video. Tombol
@@ -122,11 +123,17 @@ buka 🔍 (judul video sudah terisi) lalu tekan **Cari**.
 
 **Timeline YouTube ("In this video"):** beberapa video kompilasi tidak punya
 Chapters di progress bar, tetapi punya panel **In this video** berisi kartu
-lagu. Saat jendela lirik dibuka, `page-bridge.js` membuka panel itu sebentar
-(tanpa terlihat), membaca kartu lagu, menutupnya lagi, lalu memakai judul,
-artis, dan perkiraan waktu mulainya. Kalau YouTube hanya mengenali sebagian
-lagu, sisa video muncul sebagai segmen **Belum dikenali** — tekan `＋` di awal
-lagu berikutnya atau `⟳ Segarkan dari YouTube` kalau marker YouTube bertambah.
+lagu. Saat halaman dimuat, `page-bridge.js` menunggu tombol itu muncul, membuka
+panelnya sebentar (disembunyikan dengan CSS agar tidak berkedip), membaca kartu
+lagu, lalu menutupnya lagi — semuanya otomatis, tanpa audio yang direkam.
+Kalau YouTube hanya mengenali sebagian lagu, sisa video muncul sebagai segmen
+**Belum dikenali** — tekan `＋` di awal lagu berikutnya atau
+`⟳ Segarkan dari YouTube` kalau marker YouTube bertambah.
+
+**Sudah punya daftar manual?** Kalau daftar lagu pernah diedit manual, deteksi
+otomatis tidak menimpanya. Buka daftar lagu lalu tekan `⟳ Segarkan dari YouTube`
+**dua kali** (konfirmasi) untuk memakai daftar dari YouTube; judul manual yang
+posisinya berdekatan tetap dipertahankan.
 
 ## Cara kerja
 
@@ -219,7 +226,7 @@ refresh halaman YouTube.
 | Lirik tidak ditemukan | Gunakan 🔍 lalu ketik `Judul Lagu - Nama Artis`; lihat juga [docs/matching.md](docs/matching.md) |
 | Lirik yang muncul lagu lain | Ekstensi menolak skor di bawah 0,5; cari manual lewat 🔍 atau laporkan judul video di issue |
 | Lirik tidak sinkron | Gunakan `-0.1s` / `+0.1s` atau klik kanan pada baris yang benar |
-| Lagu di video kompilasi tidak terdeteksi | Tunggu video diputar beberapa detik (YouTube menyiapkan marker), lalu buka **daftar lagu ▾** → **⟳ Segarkan dari YouTube**. Kalau tetap kosong, tandai manual dengan `＋` |
+| Lagu di video kompilasi tidak terdeteksi | Tunggu video diputar beberapa detik (YouTube menyiapkan marker "In this video"), lalu buka **daftar lagu ▾** → **⟳ Segarkan dari YouTube**. Kalau daftar pernah diedit manual, tekan `⟳` dua kali. Kalau tetap kosong, tandai manual dengan `＋` |
 | Video panjang menampilkan "Mode video panjang" | Video tidak punya Chapters/tracklist. Tandai lagu dengan `＋`, atau tekan 🔍 (judul video sudah terisi) lalu **Cari** kalau ternyata satu lagu panjang |
 | Hanya sebagian lagu kompilasi terdeteksi | YouTube hanya mengenali sebagian lagu di panel "In this video". Sisa video jadi segmen **Belum dikenali**; tandai lagu berikutnya dengan `＋` saat mulai, atau coba **⟳ Segarkan dari YouTube** |
 | Chapters YouTube belum terbaca | Tunggu video selesai dimuat, lalu muat ulang halaman. Chapters dibaca `page-bridge.js`; kalau tetap kosong, tandai lagu manual dengan `＋` |

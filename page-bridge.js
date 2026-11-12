@@ -284,17 +284,50 @@
         return items;
     }
 
-    /** Tombol "In this video" di progress bar; hanya muncul kalau ada marker. */
+    /** Label tombol Timeline; berubah sesuai bahasa antarmuka YouTube. */
+    function isTimelineLabel(text) {
+        return /in this video|dalam video( ini)?|video ini/i.test(String(text || ''));
+    }
+
+    /**
+     * Tombol "In this video" di progress bar; hanya muncul kalau YouTube punya
+     * marker. Selektor dibuat longgar karena struktur player sering berubah.
+     */
     function timelineButton() {
-        const candidates = document.querySelectorAll(
-            '#movie_player .ytp-chapter-title, #movie_player .ytp-chapter-container button'
-        );
-        for (const button of candidates) {
-            if (!button) continue;
-            if (!button.getBoundingClientRect().width) continue;
-            if (/in this video|dalam video/i.test(button.textContent || '')) return button;
+        const selectors = [
+            '#movie_player .ytp-chapter-title',
+            '#movie_player .ytp-chapter-title-content',
+            '#movie_player .ytp-chapter-container',
+            '#movie_player .ytp-chapter-container button',
+            '#movie_player .ytp-chapters-container button',
+            '#movie_player .ytp-chapters-container [role="button"]'
+        ];
+
+        for (const selector of selectors) {
+            let candidates = [];
+            try {
+                candidates = document.querySelectorAll(selector);
+            } catch (error) {
+                continue;
+            }
+            for (const button of candidates) {
+                if (!button) continue;
+                if (!button.getBoundingClientRect().width) continue;
+                const label =
+                    (button.textContent || '') + ' ' + (button.getAttribute('aria-label') || '');
+                if (isTimelineLabel(label)) return button;
+            }
         }
         return null;
+    }
+
+    /** Ada panel engagement (transcript/timeline/deskripsi) yang sedang terbuka? */
+    function anyPanelVisible() {
+        const panels = document.querySelectorAll('ytd-engagement-panel-section-list-renderer');
+        for (const panel of panels) {
+            if (panel.getAttribute('visibility') !== 'ENGAGEMENT_PANEL_VISIBILITY_HIDDEN') return true;
+        }
+        return false;
     }
 
     // Sembunyikan panel selama pembacaan supaya tidak berkedip di layar.
@@ -332,30 +365,47 @@
 
     let timelineOpenCount = 0;
     let timelineCache = { videoId: '', chapters: [], at: 0 };
+    let timelineAttempt = { videoId: '', at: 0 };
+    let timelineEmptyFor = '';
 
     /**
      * Buka panel Timeline sekali, baca kartu lagunya, lalu tutup lagi.
      * Panel hanya punya data setelah dibuka, jadi langkah ini perlu.
+     * Panel ditutup kembali hanya kalau kita yang membukanya.
      */
     async function ensureTimelineLoaded() {
         const panel = findTimelinePanel();
         if (panel && collectTimelineItems(panel).length > 0) return true;
 
+        const waitForItems = (timeoutMs) =>
+            waitFor(
+                () => {
+                    const current = findTimelinePanel();
+                    return current ? collectTimelineItems(current).length > 0 : false;
+                },
+                timeoutMs,
+                300
+            );
+
+        // Panel sudah dibuka (mis. oleh pengguna): cukup tunggu datanya.
+        if (anyPanelVisible()) return await waitForItems(8000);
+
         const button = timelineButton();
         if (!button) return false;
 
         const style = hideTimelinePanel();
+        let opened = false;
         try {
             button.click();
-            const loaded = await waitFor(() => {
-                const current = findTimelinePanel();
-                return current ? collectTimelineItems(current).length > 0 : false;
-            }, 6000, 300);
-            return loaded;
+            opened = await waitFor(() => anyPanelVisible(), 4000, 200);
+            if (!opened) return false;
+            return await waitForItems(12000);
         } finally {
-            if (!closeTimelinePanel()) {
-                const toggle = timelineButton();
-                if (toggle) toggle.click();
+            if (opened) {
+                if (!closeTimelinePanel()) {
+                    const toggle = timelineButton();
+                    if (toggle) toggle.click();
+                }
             }
             setTimeout(() => {
                 if (style && style.parentNode) style.parentNode.removeChild(style);
@@ -363,22 +413,34 @@
         }
     }
 
-    async function collectTimelineChapters(videoId, allowOpen) {
+    async function collectTimelineChapters(videoId, force) {
         if (timelineCache.videoId === videoId && timelineCache.chapters.length >= 2) {
             return timelineCache.chapters;
         }
 
         const panel = findTimelinePanel();
         let loaded = panel ? collectTimelineItems(panel).length > 0 : false;
-        // Membuka panel membuat UI YouTube berkedip sebentar, jadi hanya
-        // dilakukan kalau content script memintanya (jendela lirik dibuka).
-        if (!loaded && !allowOpen) return [];
+
         if (!loaded) {
+            // Panel sudah dicoba dan ternyata tidak berisi lagu: jangan buka
+            // berulang-ulang (kecuali dipaksa lewat tombol Segarkan).
+            if (!force && timelineEmptyFor === videoId) return [];
+            if (!force && timelineAttempt.videoId === videoId && Date.now() - timelineAttempt.at < 15000) {
+                return [];
+            }
             if (timelineOpenCount >= TIMELINE_MAX_OPEN) return [];
+
+            const button = timelineButton();
+            if (!button) return [];
+
             timelineOpenCount += 1;
+            timelineAttempt = { videoId: videoId, at: Date.now() };
             loaded = await ensureTimelineLoaded();
+            if (!loaded) {
+                timelineAttempt = { videoId: videoId, at: Date.now() };
+                return [];
+            }
         }
-        if (!loaded) return [];
 
         const items = collectTimelineItems(findTimelinePanel());
         const api = window.BMLSegments;
@@ -386,8 +448,12 @@
             api && typeof api.parseTimelineMarkers === 'function'
                 ? api.parseTimelineMarkers(items)
                 : [];
-        if (chapters.length < 2) return [];
+        if (chapters.length < 2) {
+            timelineEmptyFor = videoId;
+            return [];
+        }
 
+        timelineEmptyFor = '';
         timelineCache = { videoId: videoId, chapters: chapters, at: Date.now() };
         return chapters;
     }
@@ -410,6 +476,10 @@
         const api = window.BMLSegments;
         if (api && typeof api.shouldUseLongVideoMode === 'function') {
             if (api.shouldUseLongVideoMode({ title: title, duration: duration })) return true;
+            // Kompilasi pendek (mis. 8 menit) tetap perlu panel Timeline.
+            if (api.isCompilationVideo && api.isCompilationVideo({ title: title, duration: duration })) {
+                return true;
+            }
             // Durasi belum diketahui (player belum siap): biarkan dicoba.
             return duration <= 0;
         }
@@ -435,6 +505,8 @@
 
         // Belum ada Chapters resmi: coba kartu lagu panel "In this video".
         if (chapters.length < 2 && shouldProbeTimeline(player)) {
+            // 'request' berasal dari tombol Segarkan / saat PiP dibuka, jadi
+            // boleh memaksa baca ulang walau percobaan sebelumnya kosong.
             const timeline = await collectTimelineChapters(videoId, reason === 'request');
             if (timeline.length >= 2) {
                 chapters = timeline;
@@ -501,6 +573,10 @@
             if (name === 'yt-navigate-finish') {
                 timelineOpenCount = 0;
                 timelineCache = { videoId: '', chapters: [], at: 0 };
+                timelineAttempt = { videoId: '', at: 0 };
+                timelineEmptyFor = '';
+                // Video baru: pasang lagi pemantau tombol Timeline.
+                setTimeout(watchTimelineButton, 1500);
             }
             queueSend(name);
         });
@@ -512,28 +588,25 @@
     });
 
     // Tombol "In this video" muncul belakangan (setelah YouTube menyiapkan
-    // marker). Begitu muncul, langsung minta ulang supaya daftar lagu terisi.
+    // marker). Cek tiap detik (bukan MutationObserver: DOM player sangat ramai)
+    // lalu minta ulang supaya daftar lagu terisi.
     function watchTimelineButton() {
-        if (typeof window.MutationObserver !== 'function') return;
-        const player = document.getElementById('movie_player');
-        if (!player) return;
+        let ticks = 0;
+        let timer = null;
 
-        const observer = new MutationObserver(() => {
-            if (!timelineButton()) return;
-            observer.disconnect();
-            queueSend('timeline-button');
-        });
-        try {
-            observer.observe(player, {
-                subtree: true,
-                childList: true,
-                characterData: true,
-                attributes: true
-            });
-        } catch (error) {
-            return;
-        }
-        setTimeout(() => observer.disconnect(), 120000);
+        const check = () => {
+            ticks += 1;
+            if (timelineButton()) {
+                clearInterval(timer);
+                queueSend('timeline-button');
+                return true;
+            }
+            if (ticks > 300) clearInterval(timer);
+            return false;
+        };
+
+        if (check()) return;
+        timer = setInterval(check, 1000);
     }
 
     if (document.readyState === 'loading') {
