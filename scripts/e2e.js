@@ -202,7 +202,10 @@ async function waitForTabReady(browser, tab, timeoutMs) {
                     video: !!document.querySelector('#movie_player video')
                 })`)
             );
-            if (state.ready === 'complete' && state.video) return conn;
+            // 'interactive' sudah cukup: video & player sudah ada, dan tahap
+            // berikutnya punya timeout sendiri. Sebagian jaringan lambat tidak
+            // pernah mencapai 'complete' dalam 30 detik.
+            if (state.ready !== 'loading' && state.video) return conn;
             await sleep(400);
         }
         throw new Error('Video YouTube tidak siap');

@@ -601,6 +601,201 @@ body.compact-mode .header-handle:hover {
     border-color: #ef4444;
 }
 
+/* ================= BAR SEGMEN LAGU ================= */
+.segment-bar {
+    flex: 0 0 auto;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 4px 8px;
+    font-size: 0.7rem;
+    background: rgba(var(--panel-rgb), 0.9);
+    border-bottom: 1px solid var(--border);
+    z-index: 20;
+}
+
+.segment-bar[hidden] {
+    display: none;
+}
+
+body.compact-mode .segment-bar {
+    display: none;
+}
+
+.seg-btn {
+    flex: 0 0 auto;
+    min-width: 24px;
+    height: 24px;
+    padding: 0 5px;
+    border: 1px solid var(--btn-border);
+    border-radius: 6px;
+    background: var(--btn-bg);
+    color: var(--text);
+    font-size: 0.8rem;
+    line-height: 1;
+    cursor: pointer;
+    transition: background-color 0.15s;
+}
+
+.seg-btn:hover:not(:disabled) {
+    background: var(--btn-hover);
+}
+
+.seg-btn:disabled {
+    opacity: 0.35;
+    cursor: default;
+}
+
+.seg-label {
+    flex: 1 1 auto;
+    min-width: 0;
+    display: flex;
+    align-items: baseline;
+    gap: 6px;
+    padding: 3px 6px;
+    border: 0;
+    border-radius: 6px;
+    background: transparent;
+    color: inherit;
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+}
+
+.seg-label:hover {
+    background: var(--ctrl-bg);
+}
+
+.seg-counter {
+    flex: 0 0 auto;
+    color: var(--accent);
+    font-weight: 700;
+    white-space: nowrap;
+}
+
+.seg-title {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: var(--muted);
+}
+
+.seg-caret {
+    flex: 0 0 auto;
+    margin-left: auto;
+    color: var(--muted);
+    font-size: 0.7rem;
+}
+
+.seg-list-panel .seg-list {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding-right: 2px;
+}
+
+.seg-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+    padding: 7px 8px;
+    border: 1px solid transparent;
+    border-radius: 8px;
+    background: var(--ctrl-bg);
+    color: var(--text);
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+    transition: background-color 0.15s, border-color 0.15s;
+}
+
+.seg-item:hover {
+    background: var(--btn-hover);
+}
+
+.seg-item.is-active {
+    border-color: var(--accent);
+}
+
+.seg-item-index {
+    flex: 0 0 auto;
+    width: 1.4em;
+    color: var(--accent);
+    font-size: 0.72rem;
+    font-weight: 700;
+    text-align: right;
+}
+
+.seg-item-text {
+    flex: 1 1 auto;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+}
+
+.seg-item-title {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 0.8rem;
+}
+
+.seg-item-artist {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 0.68rem;
+    color: var(--muted);
+}
+
+.seg-item-time {
+    flex: 0 0 auto;
+    font-size: 0.7rem;
+    color: var(--muted);
+    font-variant-numeric: tabular-nums;
+}
+
+.seg-field {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    font-size: 0.72rem;
+    color: var(--muted);
+    flex: 0 0 auto;
+}
+
+.seg-input {
+    width: 100%;
+    padding: 8px 10px;
+    border: 1px solid var(--btn-border);
+    border-radius: 8px;
+    background: var(--input-bg);
+    color: var(--text);
+    font-family: inherit;
+    font-size: 0.85rem;
+    outline: none;
+}
+
+.seg-input:focus {
+    border-color: #3b82f6;
+}
+
+.seg-delete {
+    background: #7f1d1d;
+    border-color: #991b1b;
+}
+
+.seg-delete:hover {
+    background: #991b1b;
+    border-color: #ef4444;
+}
+
 /* ================= EDITOR LIRIK ================= */
 .editor-panel {
     position: absolute;

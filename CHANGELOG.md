@@ -7,6 +7,61 @@ dan versi mengikuti [Semantic Versioning](https://semver.org/lang/id/).
 ## [Unreleased]
 
 ### Ditambahkan
+- **Deteksi lagu dari panel "In this video" (Timeline YouTube baru)**:
+  `page-bridge.js` membuka panel Timeline sekali di latar belakang (disembunyikan
+  dengan CSS, lalu ditutup lagi), membaca kartu lagu (`videoAttributeViewModel`
+  berisi judul + artis), dan mengirimnya sebagai daftar lagu. Berlaku untuk video
+  kompilasi yang tidak punya Chapters di progress bar dan/atau tidak menulis
+  timestamp di deskripsi.
+- **Segmen "Belum dikenali"** untuk sisa video yang tidak disebut YouTube:
+  kalau hanya sebagian lagu terdeteksi (mis. 10 dari 20 lagu), lagu terakhir
+  tidak lagi dipakai sampai akhir video.
+- **⟳ Segarkan dari YouTube** di daftar lagu: membaca ulang Chapters/Timeline
+  tanpa reload halaman, lalu memuat ulang daftar lagu kalau ada marker baru.
+  Kalau daftar lagu sudah pernah diedit manual, tekan `⟳` **dua kali** untuk
+  menggantinya; judul manual yang posisinya berdekatan tetap dipertahankan.
+- **Pemantau tombol "In this video"**: kalau YouTube baru menyiapkan marker
+  setelah beberapa detik, data lagu langsung diambil tanpa perlu reload.
+
+### Diperbaiki
+- **Deteksi Timeline sekarang benar-benar otomatis.** Sebelumnya panel hanya
+  dibuka saat content script meminta (dan permintaan itu datang sebelum tombol
+  "In this video" ada), sehingga pengguna harus mengisi judul manual. Sekarang
+  `page-bridge.js` membuka panel sendiri begitu tombol muncul (retry + pemantau
+  DOM sampai 5 menit), lalu menutupnya lagi.
+- Daftar lagu tidak lagi kosong pada video yang hanya punya marker Timeline
+  (sebelumnya ekstensi jatuh ke mode video panjang dan pengguna harus mengisi
+  semua judul manual).
+- Kalau pengguna sudah punya daftar manual, muncul pemberitahuan bahwa YouTube
+  menyediakan daftar lagu beserta cara memakainya (`⟳` dua kali).
+
+## [1.4.0] - 2026-11-11
+
+### Ditambahkan
+- **Dukungan video kompilasi / mix multi-lagu**: batas lagu dideteksi dari
+  Chapters YouTube, lalu fallback ke timestamp di deskripsi. Lirik berpindah
+  otomatis saat lagu berganti, dengan offset, lirik manual, dan cache yang
+  disimpan **per lagu**.
+- **Bar lagu** di jendela PiP: `‹` / `›` untuk pindah lagu, label lagu aktif,
+  `✎` untuk mengedit, dan `＋` untuk menandai lagu baru di posisi video saat ini.
+- **Penanda lagu manual** lewat dialog Judul/Artis/Mulai; segmen sebelumnya
+  otomatis dipotong, dan lagu baru bisa dihapus (waktunya digabung ke lagu
+  sebelumnya). Hasil edit tidak ditimpa deteksi otomatis saat halaman dimuat ulang.
+- **Daftar lagu** di jendela PiP: klik judul lagu di bar untuk membuka
+  daftar, lalu klik lagu mana pun untuk melompat ke waktu mulainya. Lagu aktif
+  ditandai `▶`.
+- **Pencarian lazy + prefetch** per segmen: lirik lagu berikutnya disiapkan di
+  belakang layar supaya pergantian lagu tidak menunggu.
+- **Peringatan "menunggu lagu"** saat posisi video berada di jeda antar segmen,
+  dan tampilan **"lagu tanpa judul"** untuk segmen yang belum diberi nama.
+- **Jembatan Chapters dari MAIN world** (`page-bridge.js`): content script
+  berjalan di isolated world sehingga tidak bisa membaca data milik halaman.
+  Bridge membaca `movie_player.getPlayerResponse()` / `ytInitialData`, lalu
+  mengirim daftar Chapters lewat `window.postMessage`.
+- **Mode video panjang**: video ≥ 10 menit (atau ≥ 5 menit dengan judul
+  kompilasi) yang tidak punya Chapters/tracklist tidak lagi mencari lirik
+  memakai judul video. PiP menampilkan panduan menandai lagu dengan `＋`;
+  tombol 🔍 sudah terisi judul video kalau ternyata isinya satu lagu panjang.
 - **Progress bar pencarian** dengan persentase langkah, status sumber yang
   sedang dicari, dan penghitung waktu berjalan. Bar beranimasi saat persentase
   belum diketahui, lalu berhenti di 100% saat hasil ditemukan.
@@ -30,6 +85,18 @@ dan versi mengikuti [Semantic Versioning](https://semver.org/lang/id/).
   0,5 ditampilkan sebagai "lirik tidak ditemukan", bukan lirik lagu lain.
 
 ### Diperbaiki
+- **Deteksi Chapters tidak pernah berjalan** karena content script berjalan di
+  isolated world: `ytInitialData`, `ytd-app.__data`, dan
+  `movie_player.getPlayerResponse()` tidak terlihat dari `content.js`.
+  Sekarang Chapters diambil oleh `page-bridge.js` di MAIN world.
+- Segmen placeholder "video panjang" tidak ikut disimpan, jadi menghapusnya
+  (`segmentsDisabled`) tetap mengembalikan video ke mode satu lagu.
+- **Jendela lirik kadang tertutup aplikasi lain**: Chromium bisa menurunkan
+  jendela Document PiP dari level "selalu di atas" (misalnya setelah aplikasi
+  lain masuk fullscreen), dan tidak ada API untuk menaikkannya kembali.
+  Pintasan **`Alt+Shift+L`** menutup lalu membuka ulang jendela PiP di posisi
+  dan ukuran yang sama; lirik, offset, dan segmen tetap karena tersimpan per
+  video.
 - **Tap Sinkron** sekarang menyimpan waktu relatif terhadap offset lirik, jadi
   hasil tap tidak bergeser kalau offset pernah dikalibrasi.
 - Baris yang belum ditandai saat Tap Sinkron tidak lagi diberi timestamp `0`;

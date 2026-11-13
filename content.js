@@ -5,9 +5,11 @@ if (window === window.top) {
 
     const Core = globalThis.BMLCore;
     const Kana = globalThis.BMLKana;
+    const Segments = globalThis.BMLSegments;
     if (!Core) {
         console.error('Brave Mini Lyrics: lib/lrc.js belum termuat.');
     } else {
+        if (!Segments) console.warn('Brave Mini Lyrics: lib/segments.js belum termuat.');
         run();
     }
 
@@ -75,6 +77,16 @@ if (window === window.top) {
         let loadingStartedAt = 0;
         let cacheClearArmed = false;
         let cacheClearTimer = null;
+        // Batch 4: segmen lagu untuk video kompilasi.
+        let segments = [];
+        let segmentsEdited = false;
+        let segmentsDisabled = false;
+        let activeSegmentIndex = -1;
+        let segmentBase = 0;
+        let segmentSwitchTimer = null;
+        let prefetchInFlight = {};
+        let refreshConfirmAt = 0;
+        let bridgeNoticeFor = '';
 
         const kuroshiroPromise = { current: null };
 
@@ -124,7 +136,8 @@ if (window === window.top) {
                 manualData: null,
                 autoData: null,
                 autoCachedAt: 0,
-                latinData: null
+                latinData: null,
+                segments: []
             };
             if (!videoId) return defaults;
             try {
@@ -148,7 +161,8 @@ if (window === window.top) {
                         manualData: null,
                         autoData: null,
                         autoCachedAt: 0,
-                        latinData: null
+                        latinData: null,
+                        segments: []
                     },
                     obj[key] || {},
                     patch,
@@ -449,6 +463,611 @@ if (window === window.top) {
                 series: ost.series,
                 duration: duration
             };
+        }
+
+        // ==========================================
+        // SEGMEN VIDEO KOMPILASI (Batch 4)
+        // ==========================================
+        // Video kompilasi/mix berisi banyak lagu dalam satu video. Batas lagu
+        // diambil dari Chapters YouTube, lalu fallback ke timestamp di deskripsi.
+        // Hasil deteksi dipakai untuk berpindah lagu otomatis, offset per lagu,
+        // dan penandaan lagu manual dari PiP.
+        const CHAPTER_NODE_LIMIT = 20000;
+        const PAGE_BRIDGE_SOURCE = 'bml-page-bridge';
+        let segmentsCache = { key: '', segments: [] };
+        // Chapters dari MAIN-world bridge (lihat page-bridge.js).
+        let chapterBridge = { videoId: '', chapters: [], source: '', at: 0 };
+        let chapterRequestedFor = '';
+        let bridgeUpgradeSignature = '';
+
+        function getPlayerResponse() {
+            try {
+                const app = document.querySelector('ytd-app');
+                const raw = app && (app.__data || app.data);
+                const appData = raw && (raw.data || raw);
+                if (!appData) return null;
+                if (
+                    appData.player &&
+                    appData.player.args &&
+                    appData.player.args.raw_player_response
+                ) {
+                    return appData.player.args.raw_player_response;
+                }
+                return appData.playerResponse || null;
+            } catch (error) {
+                // struktur data YouTube bisa berubah: abaikan
+                return null;
+            }
+        }
+
+        // Cari node `macroMarkersListItemRenderer` (Chapters) tanpa menelusuri
+        // seluruh objek raksasa YouTube.
+        function collectChapterEntries(root) {
+            if (!Segments || !root || typeof root !== 'object') return [];
+            const found = [];
+            const stack = [{ node: root, depth: 0 }];
+            let visited = 0;
+
+            while (stack.length > 0) {
+                const item = stack.pop();
+                if (!item.node || typeof item.node !== 'object') continue;
+                if (item.depth > 14) continue;
+                visited += 1;
+                if (visited > CHAPTER_NODE_LIMIT) break;
+
+                if (Array.isArray(item.node)) {
+                    for (const child of item.node) {
+                        if (child && typeof child === 'object') {
+                            stack.push({ node: child, depth: item.depth + 1 });
+                        }
+                    }
+                    continue;
+                }
+
+                if (item.node.macroMarkersListItemRenderer) {
+                    found.push(item.node.macroMarkersListItemRenderer);
+                    continue;
+                }
+
+                for (const key of Object.keys(item.node)) {
+                    const child = item.node[key];
+                    if (child && typeof child === 'object') {
+                        stack.push({ node: child, depth: item.depth + 1 });
+                    }
+                }
+            }
+
+            return found;
+        }
+
+        function getVideoChapterData() {
+            if (!Segments) return [];
+
+            // Utamakan data dari page-bridge: content script tidak bisa membaca
+            // playerResponse/ytInitialData milik halaman (isolated world).
+            const videoId = getVideoId();
+            if (
+                chapterBridge.videoId &&
+                chapterBridge.videoId === videoId &&
+                chapterBridge.chapters.length >= 2
+            ) {
+                return chapterBridge.chapters;
+            }
+
+            const player = getPlayerResponse();
+            if (player) {
+                const fromPlayer = Segments.normalizeChapters(
+                    collectChapterEntries(player.engagementPanels)
+                );
+                if (fromPlayer.length >= 2) return fromPlayer;
+            }
+
+            try {
+                const fromPage = Segments.normalizeChapters(
+                    collectChapterEntries(window.ytInitialData)
+                );
+                if (fromPage.length >= 2) return fromPage;
+            } catch (error) {
+                // ytInitialData bisa berubah/ tidak tersedia: abaikan
+            }
+
+            return [];
+        }
+
+        function getVideoDescriptionText() {
+            const element = document.querySelector(
+                '#description-inline-expander, ytd-text-inline-expander#description-inline-expander, #description'
+            );
+            const fromPage = element ? element.innerText || element.textContent || '' : '';
+            if (fromPage.trim()) return fromPage;
+
+            const player = getPlayerResponse();
+            const details = player && player.videoDetails;
+            return (details && details.shortDescription) || '';
+        }
+
+        function segmentsSignature(segments) {
+            return (segments || [])
+                .map((segment) =>
+                    [
+                        segment.id,
+                        Math.round(Number(segment.start) * 10) / 10,
+                        Math.round(Number(segment.end) * 10) / 10,
+                        segment.title || '',
+                        segment.artist || '',
+                        segment.source || ''
+                    ].join('|')
+                )
+                .join('\n');
+        }
+
+        // ==========================================
+        // JEMBATAN CHAPTERS (MAIN WORLD)
+        // ==========================================
+        function requestPageChapters() {
+            try {
+                window.postMessage({ source: 'bml-content', type: 'chapters' }, '*');
+            } catch (error) {
+                // abaikan
+            }
+        }
+
+        function bridgeDataReady(videoId) {
+            return Boolean(videoId) && chapterBridge.videoId === videoId;
+        }
+
+        // Tunggu jawaban page-bridge sekali per video. Untuk video yang tidak
+        // punya chapters, bridge tetap mengirim daftar kosong.
+        async function ensureChapterData(videoId, timeoutMs) {
+            if (!videoId) return;
+            if (bridgeDataReady(videoId)) return;
+            if (chapterRequestedFor === videoId) return;
+            chapterRequestedFor = videoId;
+            requestPageChapters();
+
+            await new Promise((resolve) => {
+                let settled = false;
+                let timer = null;
+                const finish = () => {
+                    if (settled) return;
+                    settled = true;
+                    clearTimeout(timer);
+                    window.removeEventListener('message', listener);
+                    resolve();
+                };
+                const listener = (event) => {
+                    if (event.source !== window) return;
+                    const data = event.data;
+                    if (!data || data.source !== PAGE_BRIDGE_SOURCE) return;
+                    if (data.type !== 'chapters') return;
+                    if (data.videoId && data.videoId !== videoId) return;
+                    finish();
+                };
+                window.addEventListener('message', listener);
+                timer = setTimeout(finish, timeoutMs || 700);
+            });
+        }
+
+        // Kalau chapters baru datang setelah mode video panjang aktif, ganti
+        // placeholder dengan segmen lagu sebenarnya tanpa menimpa hasil edit.
+        function maybeUpgradeLongVideo(chapters) {
+            if (!pipWindow) return;
+            if (!Array.isArray(chapters) || chapters.length < 2) return;
+            if (segmentsEdited || segmentsDisabled) return;
+
+            // Hanya placeholder (mode video panjang) atau belum ada segmen.
+            const placeholderOnly =
+                segments.length === 1 && segments[0] && segments[0].source === 'long-video';
+            if (!placeholderOnly && segments.length > 0) return;
+            if (
+                tapState ||
+                byId('editor-panel') ||
+                byId('segment-panel') ||
+                byId('segment-list-panel')
+            ) {
+                return;
+            }
+
+            const signature = chapters
+                .map((chapter) => Math.round(Number(chapter.start) * 10) + '|' + (chapter.title || ''))
+                .join('\n');
+            if (signature === bridgeUpgradeSignature) return;
+            bridgeUpgradeSignature = signature;
+
+            segmentsCache = { key: '', segments: [] };
+            loadLyricsToPiP(null, null);
+            toast('Chapters terdeteksi: memuat daftar lagu');
+        }
+
+        function setupChapterBridge() {
+            window.addEventListener('message', (event) => {
+                if (event.source !== window) return;
+                const data = event.data;
+                if (!data || data.source !== PAGE_BRIDGE_SOURCE || data.type !== 'chapters') {
+                    return;
+                }
+
+                const current = getVideoId();
+                if (data.videoId && current && data.videoId !== current) return;
+
+                chapterBridge = {
+                    videoId: data.videoId || current || '',
+                    chapters: Array.isArray(data.chapters) ? data.chapters : [],
+                    source: data.chapterSource || 'chapter',
+                    at: Date.now()
+                };
+                segmentsCache.key = '';
+                maybeUpgradeLongVideo(chapterBridge.chapters);
+
+                // Pengguna sudah punya daftar lagu manual: beri tahu bahwa
+                // YouTube sekarang punya daftar resmi yang bisa dipakai.
+                if (
+                    chapterBridge.chapters.length >= 2 &&
+                    segmentsEdited &&
+                    pipWindow &&
+                    chapterBridge.videoId &&
+                    bridgeNoticeFor !== chapterBridge.videoId
+                ) {
+                    bridgeNoticeFor = chapterBridge.videoId;
+                    toast(
+                        'YouTube menemukan ' +
+                            chapterBridge.chapters.length +
+                            ' lagu. Buka daftar lagu lalu tekan ⟳ 2× untuk memakainya'
+                    );
+                }
+            });
+        }
+
+        // Tunggu page-bridge mengirim daftar lagu (minimal 2) untuk video ini.
+        function waitForBridgeChapters(videoId, timeoutMs) {
+            return new Promise((resolve) => {
+                let done = false;
+                const finish = () => {
+                    if (done) return;
+                    done = true;
+                    clearTimeout(timer);
+                    window.removeEventListener('message', listener);
+                    resolve(chapterBridge.chapters || []);
+                };
+                const listener = (event) => {
+                    if (event.source !== window) return;
+                    const data = event.data;
+                    if (!data || data.source !== PAGE_BRIDGE_SOURCE) return;
+                    if (data.type !== 'chapters') return;
+                    if (data.videoId && videoId && data.videoId !== videoId) return;
+                    if (Array.isArray(data.chapters) && data.chapters.length >= 2) finish();
+                };
+                const timer = setTimeout(finish, timeoutMs || 10000);
+                window.addEventListener('message', listener);
+            });
+        }
+
+        // Baca ulang daftar lagu dari YouTube (Chapters / panel Timeline).
+        // Berguna kalau YouTube baru menyediakan marker setelah video diputar.
+        async function refreshSegmentsFromPage() {
+            const videoId = getVideoId();
+            if (!videoId) return;
+            if (segmentsDisabled) {
+                toast('Daftar lagu untuk video ini dinonaktifkan');
+                return;
+            }
+
+            // Daftar hasil edit manual tidak ditimpa tanpa konfirmasi:
+            // tekan tombol ⟳ dua kali dalam 6 detik.
+            let replaceManual = false;
+            if (segmentsEdited) {
+                if (Date.now() - refreshConfirmAt > 6000) {
+                    refreshConfirmAt = Date.now();
+                    toast('Tekan ⟳ sekali lagi untuk mengganti daftar lagu manual');
+                    return;
+                }
+                refreshConfirmAt = 0;
+                replaceManual = true;
+            }
+
+            const manual = replaceManual ? normalizeStoredSegments(segments) : [];
+
+            closeSegmentList();
+            chapterBridge = { videoId: '', chapters: [], source: '', at: 0 };
+            chapterRequestedFor = '';
+            requestPageChapters();
+            toast('Mencari daftar lagu dari YouTube…');
+
+            const chapters =
+                (await waitForBridgeChapters(videoId, 22000)) ||
+                (chapterBridge.videoId === videoId ? chapterBridge.chapters : []);
+            if (!chapters || chapters.length < 2) {
+                toast('YouTube belum menyediakan daftar lagu untuk video ini');
+                return;
+            }
+
+            const meta = getVideoMetadata();
+            segmentsCache = { key: '', segments: [] };
+            bridgeUpgradeSignature = '';
+
+            const fresh = getVideoSegments(
+                meta,
+                Object.assign({}, currentVideoData, { segmentsEdited: false, segments: [] })
+            );
+            if (!Array.isArray(fresh) || fresh.length < 2) {
+                toast('YouTube belum menyediakan daftar lagu untuk video ini');
+                return;
+            }
+
+            const carried = manual.length > 0 ? carryOverManualTitles(fresh, manual) : 0;
+            segments = fresh;
+            segmentsEdited = carried > 0;
+            currentVideoData = Object.assign({}, currentVideoData, { segments: fresh });
+            await saveVideoData(videoId, {
+                segments: fresh,
+                segmentsEdited: segmentsEdited
+            });
+
+            await loadLyricsToPiP(null, null);
+            toast(
+                chapters.length +
+                    ' lagu ditemukan dari YouTube' +
+                    (carried > 0 ? ' (' + carried + ' judul manual dipertahankan)' : '')
+            );
+        }
+
+        // Pertahankan judul/artis yang diketik pengguna saat daftar lagu
+        // otomatis diterapkan ulang: cari segmen dengan waktu mulai terdekat.
+        function carryOverManualTitles(fresh, manual) {
+            let carried = 0;
+            for (const old of manual) {
+                if (!old || !old.title) continue;
+                let best = null;
+                let bestDelta = Infinity;
+                for (const segment of fresh) {
+                    const delta = Math.abs(Number(segment.start) - Number(old.start));
+                    if (delta < bestDelta) {
+                        bestDelta = delta;
+                        best = segment;
+                    }
+                }
+                if (!best || bestDelta > 15) continue;
+                if (best.title) continue;
+                best.title = old.title;
+                best.artist = old.artist || best.artist || '';
+                best.offset = Number(old.offset) || 0;
+                best.manualData = old.manualData || best.manualData || null;
+                best.edited = true;
+                carried += 1;
+            }
+            return carried;
+        }
+
+        function normalizeStoredSegments(list) {
+            if (!Array.isArray(list)) return [];
+            return list
+                .filter(
+                    (segment) =>
+                        segment &&
+                        Number.isFinite(Number(segment.start)) &&
+                        Number.isFinite(Number(segment.end))
+                )
+                .map((segment) => ({
+                    start: Number(segment.start),
+                    end: Number(segment.end),
+                    title: typeof segment.title === 'string' ? segment.title : '',
+                    artist: typeof segment.artist === 'string' ? segment.artist : '',
+                    source: segment.source || 'auto',
+                    offset: Number(segment.offset) || 0,
+                    manualData: segment.manualData || null,
+                    autoData: segment.autoData || null,
+                    autoCachedAt: Number(segment.autoCachedAt) || 0,
+                    latinData: segment.latinData || null,
+                    edited: Boolean(segment.edited)
+                }))
+                .sort((a, b) => a.start - b.start)
+                .map((segment, index) => Object.assign(segment, { id: 's' + index }));
+        }
+
+        // Pertahankan lirik/offset segmen lama saat batas lagu dideteksi ulang.
+        function mergeSegments(previous, fresh) {
+            const stored = normalizeStoredSegments(previous);
+            const normalize = (value) => String(value || '').trim().toLowerCase();
+            return fresh.map((segment) => {
+                const match =
+                    stored.find((item) => Math.abs(item.start - segment.start) <= 1.5) ||
+                    (segment.title
+                        ? stored.find(
+                              (item) =>
+                                  normalize(item.title) === normalize(segment.title) &&
+                                  normalize(item.artist) === normalize(segment.artist)
+                          )
+                        : null) ||
+                    null;
+                if (!match) {
+                    return Object.assign(
+                        {
+                            offset: 0,
+                            manualData: null,
+                            autoData: null,
+                            autoCachedAt: 0,
+                            latinData: null
+                        },
+                        segment
+                    );
+                }
+
+                const merged = Object.assign({}, segment, {
+                    offset: match.offset,
+                    manualData: match.manualData,
+                    autoData: match.autoData,
+                    autoCachedAt: match.autoCachedAt,
+                    latinData: match.latinData
+                });
+                if (match.edited) {
+                    merged.title = match.title;
+                    merged.artist = match.artist;
+                    merged.edited = true;
+                }
+                return merged;
+            });
+        }
+
+        function getVideoSegments(meta, saved) {
+            if (!Segments) return [];
+
+            const stored = saved && Array.isArray(saved.segments) ? saved.segments : [];
+            if (saved && saved.segmentsDisabled) return [];
+            // Kalau pengguna sudah pernah menandai/mengedit, jangan ditimpa
+            // hasil deteksi otomatis.
+            if (saved && saved.segmentsEdited) {
+                return normalizeStoredSegments(stored);
+            }
+
+            const videoId = getVideoId() || '';
+            const duration = Math.round(Number(meta && meta.duration) || 0);
+            const key = videoId + ':' + duration;
+
+            if (segmentsCache.key !== key) {
+                const chapterEntries = getVideoChapterData();
+                const description = getVideoDescriptionText();
+
+                let entries = chapterEntries;
+                let source = 'chapter';
+                if (entries.length < 2) {
+                    entries = Segments.parseTracklist(description, { duration: duration });
+                    source = 'description';
+                }
+                // Kartu lagu dari panel Timeline YouTube baru.
+                if (
+                    entries.length >= 2 &&
+                    entries.every((entry) => entry && entry.source === 'timeline')
+                ) {
+                    source = 'timeline';
+                }
+
+                let detected =
+                    entries.length >= 2
+                        ? Segments.buildSegments(entries, duration, {
+                              source: source,
+                              channel: (meta && (meta.searchArtist || meta.artist)) || ''
+                          })
+                        : [];
+
+                if (
+                    detected.length > 0 &&
+                    !Segments.isCompilationVideo({
+                        title: (meta && meta.title) || '',
+                        description: description,
+                        duration: duration,
+                        segments: detected
+                    })
+                ) {
+                    detected = [];
+                }
+
+                // Timeline kadang hanya memuat sebagian lagu: jangan biarkan
+                // lagu terakhir menutupi sisa video yang panjang.
+                if (detected.length > 0 && source === 'timeline') {
+                    detected = Segments.trimTrailingUnknown(detected, duration);
+                }
+
+                segmentsCache = { key: key, segments: detected, source: source };
+                if (detected.length > 0) {
+                    console.info(
+                        'Brave Mini Lyrics: ' +
+                            detected.length +
+                            ' segmen lagu terdeteksi (' +
+                            source +
+                            ').'
+                    );
+                }
+            }
+
+            if (segmentsCache.segments.length === 0) {
+                const storedSegments = normalizeStoredSegments(stored);
+                if (storedSegments.length > 0) return storedSegments;
+
+                // Video panjang tanpa Chapters/tracklist: jangan cari lirik
+                // memakai judul video (hampir pasti lagu yang salah). Masuk
+                // mode penandaan lagu manual; placeholder sengaja tanpa judul.
+                if (Segments.shouldUseLongVideoMode(meta)) {
+                    console.info(
+                        'Brave Mini Lyrics: mode video panjang aktif (tanpa daftar lagu).'
+                    );
+                    return [Segments.buildLongVideoSegment(meta && meta.duration)];
+                }
+                return [];
+            }
+            return mergeSegments(stored, segmentsCache.segments);
+        }
+
+        function saveSegmentsNow(options) {
+            const opts = options || {};
+            const videoId = getVideoId();
+            if (!videoId) return;
+            if (opts.edited) segmentsEdited = true;
+            if (opts.disabled !== undefined) {
+                segmentsDisabled = Boolean(opts.disabled);
+            } else if (segments.length > 0) {
+                segmentsDisabled = false;
+            }
+            currentVideoData = Object.assign({}, currentVideoData, {
+                segments: segments,
+                segmentsEdited: segmentsEdited,
+                segmentsDisabled: segmentsDisabled
+            });
+            saveVideoData(videoId, {
+                segments: segments,
+                segmentsEdited: segmentsEdited,
+                segmentsDisabled: segmentsDisabled,
+                segmentsUpdatedAt: Date.now()
+            });
+        }
+
+        function activeSegment() {
+            if (activeSegmentIndex < 0) return null;
+            return segments[activeSegmentIndex] || null;
+        }
+
+        function segmentDisplayTitle(segment) {
+            if (!segment) return '';
+            const title = segment.title || '';
+            const artist = segment.artist || '';
+            if (title && artist) return title + ' — ' + artist;
+            return title || artist || '';
+        }
+
+        function currentSegmentSaved() {
+            const segment = activeSegment();
+            if (!segment) return null;
+            return {
+                offset: Number(segment.offset) || 0,
+                manualData: segment.manualData || null,
+                autoData: segment.autoData || null,
+                autoCachedAt: Number(segment.autoCachedAt) || 0,
+                // Cache romanisasi disimpan per lagu; fallback ke cache video
+                // untuk data lama sebelum Batch 4.
+                latinData:
+                    segment.latinData ||
+                    (currentVideoData && currentVideoData.latinData) ||
+                    null
+            };
+        }
+
+        function activeLatinData() {
+            const segment = activeSegment();
+            if (segment) return segment.latinData || null;
+            return (currentVideoData && currentVideoData.latinData) || null;
+        }
+
+        // Simpan perubahan lirik ke segmen aktif (atau ke video untuk single-track).
+        function applyLyricsPatch(patch) {
+            const segment = activeSegment();
+            const videoId = getVideoId();
+            if (!segment || !videoId) {
+                currentVideoData = Object.assign({}, currentVideoData, patch);
+                if (videoId) return saveVideoData(videoId, patch);
+                return Promise.resolve();
+            }
+            Object.assign(segment, patch);
+            currentVideoData = Object.assign({}, currentVideoData, { segments: segments });
+            return saveVideoData(videoId, { segments: segments });
         }
 
         // ==========================================
@@ -822,8 +1441,44 @@ if (window === window.top) {
             if (rafId !== null) return;
             rafId = requestAnimationFrame(() => {
                 rafId = null;
+                maybeSwitchSegment();
                 updateLyricsHighlight();
             });
+        }
+
+        // Pindah lagu otomatis saat waktu video melewati batas segmen.
+        function maybeSwitchSegment() {
+            if (!videoElement || segments.length === 0) return;
+            if (segmentSwitchTimer !== null) return;
+            // Jangan rebut editor/tap-sync yang sedang dipakai pengguna.
+            if (tapState || byId('editor-panel') || byId('segment-panel')) return;
+
+            const index = Segments.findSegmentIndex(segments, videoElement.currentTime);
+            if (index === activeSegmentIndex) return;
+
+            if (index < 0) {
+                if (activeSegmentIndex !== -1) {
+                    activeSegmentIndex = -1;
+                    segmentBase = 0;
+                    renderSegmentWaiting();
+                }
+                return;
+            }
+
+            clearTimeout(segmentSwitchTimer);
+            segmentSwitchTimer = setTimeout(() => {
+                segmentSwitchTimer = null;
+                if (!videoElement || segments.length === 0) return;
+                const resolved = Segments.findSegmentIndex(segments, videoElement.currentTime);
+                if (resolved === activeSegmentIndex) return;
+                if (resolved < 0) {
+                    activeSegmentIndex = -1;
+                    segmentBase = 0;
+                    renderSegmentWaiting();
+                    return;
+                }
+                loadLyricsToPiP(null, null, { segmentIndex: resolved });
+            }, 260);
         }
 
         function onPlayStateChange() {
@@ -838,6 +1493,7 @@ if (window === window.top) {
             if (!videoElement) return;
             boundVideoElement = videoElement;
             boundVideoElement.addEventListener('timeupdate', onTimeUpdate);
+            boundVideoElement.addEventListener('seeked', onTimeUpdate);
             boundVideoElement.addEventListener('play', onPlayStateChange);
             boundVideoElement.addEventListener('pause', onPlayStateChange);
             boundVideoElement.addEventListener('loadedmetadata', onPlayStateChange);
@@ -851,6 +1507,7 @@ if (window === window.top) {
             }
             if (!boundVideoElement) return;
             boundVideoElement.removeEventListener('timeupdate', onTimeUpdate);
+            boundVideoElement.removeEventListener('seeked', onTimeUpdate);
             boundVideoElement.removeEventListener('play', onPlayStateChange);
             boundVideoElement.removeEventListener('pause', onPlayStateChange);
             boundVideoElement.removeEventListener('loadedmetadata', onPlayStateChange);
@@ -874,7 +1531,7 @@ if (window === window.top) {
         function updateLyricsHighlight() {
             if (!pipWindow || !videoElement || !isSyncedLyrics || parsedLyrics.length === 0) return;
 
-            const time = videoElement.currentTime - lyricsTimeOffset;
+            const time = videoElement.currentTime - segmentBase - lyricsTimeOffset;
             const index = Core.findActiveIndex(parsedLyrics, time);
             if (index === currentHighlightIndex) return;
 
@@ -903,6 +1560,7 @@ if (window === window.top) {
                     <button type="button" class="ctrl-btn" id="ctrl-pp" title="Play / pause">⏸</button>
                     <button type="button" class="ctrl-btn" id="ctrl-next" title="Video berikutnya">⏭</button>
                     <button type="button" class="ctrl-btn" id="btn-edit" title="Edit / buat lirik">✎</button>
+                    <button type="button" class="ctrl-btn" id="ctrl-segment" title="Tandai lagu baru di posisi ini">＋</button>
                 </div>
             `;
         }
@@ -1112,6 +1770,9 @@ if (window === window.top) {
             const btnEdit = byId('btn-edit');
             if (btnEdit) btnEdit.addEventListener('click', openEditor);
 
+            const btnSegment = byId('ctrl-segment');
+            if (btnSegment) btnSegment.addEventListener('click', openNewSegmentDialog);
+
             const btnStop = byId('btn-stop-search');
             if (btnStop) {
                 btnStop.addEventListener('click', () => {
@@ -1125,6 +1786,534 @@ if (window === window.top) {
             onPlayStateChange();
         }
 
+        // ==========================================
+        // SEGMEN: BAR, NAVIGASI, DAN EDITOR
+        // ==========================================
+        function renderSegmentBar() {
+            if (!pipWindow) return;
+            const bar = byId('segment-bar');
+            if (!bar) return;
+
+            if (segments.length === 0) {
+                bar.hidden = true;
+                bar.innerHTML = '';
+                return;
+            }
+
+            bar.hidden = false;
+            const segment = activeSegment();
+            const counter =
+                activeSegmentIndex >= 0
+                    ? 'Lagu ' + (activeSegmentIndex + 1) + '/' + segments.length
+                    : segments.length + ' lagu';
+            const label = segment
+                ? segmentDisplayTitle(segment) ||
+                  (segments.length === 1 && segment.source === 'long-video'
+                      ? 'Tandai lagu dengan ＋'
+                      : segment.source === 'unknown'
+                        ? 'Belum dikenali'
+                        : 'Tanpa judul')
+                : 'Menunggu lagu…';
+            const prevDisabled = activeSegmentIndex <= 0 ? ' disabled' : '';
+            const nextDisabled =
+                activeSegmentIndex >= segments.length - 1 ? ' disabled' : '';
+
+            bar.innerHTML = `
+                <button type="button" class="seg-btn" id="seg-prev" title="Lagu sebelumnya"${prevDisabled}>‹</button>
+                <button type="button" class="seg-label" id="seg-open" title="Daftar lagu">
+                    <span class="seg-counter">${escapeHtml(counter)}</span>
+                    <span class="seg-title">${escapeHtml(label)}</span>
+                    <span class="seg-caret" aria-hidden="true">▾</span>
+                </button>
+                <button type="button" class="seg-btn" id="seg-edit" title="Edit lagu ini">✎</button>
+                <button type="button" class="seg-btn" id="seg-next" title="Lagu berikutnya"${nextDisabled}>›</button>
+                <button type="button" class="seg-btn" id="seg-add" title="Tandai lagu baru di posisi ini">＋</button>
+            `;
+
+            const bind = (id, handler) => {
+                const element = byId(id);
+                if (element) element.addEventListener('click', handler);
+            };
+            bind('seg-prev', () => segmentGoTo(Math.max(0, activeSegmentIndex - 1)));
+            bind('seg-next', () =>
+                segmentGoTo(Math.min(segments.length - 1, activeSegmentIndex + 1))
+            );
+            bind('seg-open', openSegmentList);
+            bind('seg-edit', openSegmentEditor);
+            bind('seg-add', openNewSegmentDialog);
+            updateSegmentListActive();
+        }
+
+        // Daftar lagu: klik judul lagu untuk melompat ke waktu mulainya.
+        function openSegmentList() {
+            if (!pipWindow) return;
+            closeSegmentList();
+            closeSegmentDialog();
+
+            const doc = pipWindow.document;
+            const panel = doc.createElement('div');
+            panel.id = 'segment-list-panel';
+            panel.className = 'editor-panel segment-panel segment-list-panel';
+            panel.innerHTML = `
+                <div class="editor-head">
+                    <span>Daftar Lagu (${segments.length})</span>
+                    <button type="button" class="editor-close" id="segment-list-close" title="Tutup">✕</button>
+                </div>
+                <div class="seg-list" id="seg-list"></div>
+                <div class="editor-actions">
+                    <button type="button" class="sync-btn" id="segment-list-add">＋ Tandai lagu di posisi ini</button>
+                    <button type="button" class="sync-btn" id="segment-list-refresh" title="Baca ulang daftar lagu dari YouTube">⟳ Segarkan dari YouTube</button>
+                </div>
+                <p class="editor-hint">Klik lagu untuk melompat ke waktunya.</p>
+            `;
+            doc.body.appendChild(panel);
+            renderSegmentList();
+
+            const list = doc.getElementById('seg-list');
+            if (list) {
+                list.querySelectorAll('.seg-item').forEach((row) => {
+                    row.addEventListener('click', () => {
+                        const index = Number(row.dataset.index);
+                        closeSegmentList();
+                        segmentGoTo(index);
+                    });
+                });
+            }
+
+            const closeButton = doc.getElementById('segment-list-close');
+            if (closeButton) closeButton.addEventListener('click', closeSegmentList);
+
+            const addButton = doc.getElementById('segment-list-add');
+            if (addButton) {
+                addButton.addEventListener('click', () => {
+                    closeSegmentList();
+                    openNewSegmentDialog();
+                });
+            }
+
+            const refreshButton = doc.getElementById('segment-list-refresh');
+            if (refreshButton) {
+                refreshButton.addEventListener('click', () => refreshSegmentsFromPage());
+            }
+        }
+
+        function renderSegmentList() {
+            if (!pipWindow) return;
+            const list = byId('seg-list');
+            if (!list) return;
+
+            list.innerHTML = segments
+                .map((segment, index) => {
+                    const title =
+                        segment.title ||
+                        (segment.source === 'long-video'
+                            ? 'Lagu belum ditandai'
+                            : segment.source === 'unknown'
+                              ? 'Belum dikenali'
+                              : 'Tanpa judul');
+                    const artist = segment.artist || '';
+                    const active = index === activeSegmentIndex;
+                    return `
+                        <button type="button" class="seg-item${active ? ' is-active' : ''}"
+                            data-index="${index}"${active ? ' aria-current="true"' : ''}>
+                            <span class="seg-item-index">${active ? '▶' : index + 1}</span>
+                            <span class="seg-item-text">
+                                <span class="seg-item-title">${escapeHtml(title)}</span>
+                                ${
+                                    artist
+                                        ? `<span class="seg-item-artist">${escapeHtml(artist)}</span>`
+                                        : ''
+                                }
+                            </span>
+                            <span class="seg-item-time">${escapeHtml(
+                                Core.formatTime(segment.start)
+                            )}</span>
+                        </button>
+                    `;
+                })
+                .join('');
+        }
+
+        function updateSegmentListActive() {
+            if (!pipWindow) return;
+            const panel = byId('segment-list-panel');
+            if (!panel) return;
+
+            const rows = panel.querySelectorAll('.seg-item');
+            rows.forEach((row) => {
+                const active = Number(row.dataset.index) === activeSegmentIndex;
+                row.classList.toggle('is-active', active);
+                if (active) row.setAttribute('aria-current', 'true');
+                else row.removeAttribute('aria-current');
+                const indexLabel = row.querySelector('.seg-item-index');
+                if (indexLabel) {
+                    indexLabel.textContent = active ? '▶' : String(Number(row.dataset.index) + 1);
+                }
+            });
+        }
+
+        function closeSegmentList() {
+            if (!pipWindow) return;
+            const panel = byId('segment-list-panel');
+            if (panel) panel.remove();
+        }
+
+        function segmentGoTo(index) {
+            if (index < 0 || index >= segments.length) return;
+            if (videoElement) videoElement.currentTime = Math.max(0, segments[index].start + 0.05);
+            loadLyricsToPiP(null, null, { segmentIndex: index });
+        }
+
+        function renderSegmentWaiting() {
+            if (!pipWindow) return;
+            stopLoadingProgress();
+            const body = pipWindow.document.body;
+            body.classList.remove('is-loading', 'results-mode', 'showing-results');
+
+            isSyncedLyrics = false;
+            parsedLyrics = [];
+            lineElements = [];
+            currentHighlightIndex = -1;
+
+            const header = byId('header');
+            const container = byId('lyrics-container');
+            if (!header || !container) return;
+
+            header.innerHTML = `
+                <div class="header-inner">
+                    <p class="title">Menunggu lagu berikutnya…</p>
+                    <p class="artist">Video ini berisi ${segments.length} lagu</p>
+                    ${playerControlsMarkup()}
+                    ${searchBoxMarkup('')}
+                </div>
+            `;
+            container.innerHTML =
+                '<p class="loading">Lirik muncul otomatis saat lagu berikutnya dimulai.</p>';
+
+            bindHeaderEvents({ synced: false, fallbackSearchText: '' });
+            renderSegmentBar();
+            applyFontScale();
+
+            // Siapkan lirik lagu berikutnya selagi menunggu.
+            const time = videoElement ? videoElement.currentTime : 0;
+            for (let i = 0; i < segments.length; i += 1) {
+                if (segments[i].start >= time) {
+                    prefetchSegment(i);
+                    break;
+                }
+            }
+        }
+
+        function renderSegmentUntitled() {
+            if (!pipWindow) return;
+            stopLoadingProgress();
+            const body = pipWindow.document.body;
+            body.classList.remove('is-loading', 'results-mode', 'showing-results');
+
+            isSyncedLyrics = false;
+            parsedLyrics = [];
+            lineElements = [];
+            currentHighlightIndex = -1;
+
+            const header = byId('header');
+            const container = byId('lyrics-container');
+            if (!header || !container) return;
+
+            const meta = getVideoMetadata();
+            const longVideo =
+                segments.length === 1 && segments[0] && !segments[0].title;
+            const segment = activeSegment();
+            const unknownRegion = !longVideo && Boolean(segment) && segment.source === 'unknown';
+            const videoSearchText = meta.title
+                ? meta.title + (meta.artist ? ' - ' + meta.artist : '')
+                : '';
+
+            header.innerHTML = longVideo
+                ? `
+                <div class="header-inner">
+                    <p class="title">Mode video panjang</p>
+                    <p class="artist">Durasi ${escapeHtml(
+                        Core.formatTime(meta.duration) || 'video ini'
+                    )} terlalu panjang untuk satu lagu</p>
+                    ${playerControlsMarkup()}
+                    ${searchBoxMarkup(videoSearchText)}
+                </div>
+            `
+                : `
+                <div class="header-inner">
+                    <p class="title">${unknownRegion ? 'Lagu belum dikenali' : 'Lagu tanpa judul'}</p>
+                    <p class="artist">${
+                        unknownRegion
+                            ? 'YouTube belum menyediakan batas lagu di bagian ini'
+                            : 'Isi judul lagu supaya liriknya bisa dicari'
+                    }</p>
+                    ${playerControlsMarkup()}
+                    ${searchBoxMarkup('')}
+                </div>
+            `;
+            container.innerHTML = longVideo
+                ? '<p class="loading">Tandai tiap lagu dengan <b>＋</b> tepat saat lagu baru dimulai, lalu isi judulnya. Lirik akan diganti otomatis per lagu.<br><br>Kalau video ini ternyata satu lagu panjang, buka 🔍 (judul video sudah terisi) lalu tekan <b>Cari</b>.</p>'
+                : unknownRegion
+                  ? '<p class="loading">Tekan <b>＋</b> tepat saat lagu berikutnya mulai, lalu isi judulnya. Lagu yang sudah dikenali ada di daftar <b>▾</b>.</p>'
+                  : '<p class="loading">Tekan ✎ pada bar lagu untuk mengisi judul dan artis, atau 🔍 untuk mencari manual.</p>';
+
+            bindHeaderEvents({
+                synced: false,
+                fallbackSearchText: longVideo ? videoSearchText : ''
+            });
+            renderSegmentBar();
+            applyFontScale();
+        }
+
+        function openNewSegmentDialog() {
+            if (!pipWindow || !videoElement) return;
+            openSegmentDialog({ mode: 'new', start: videoElement.currentTime });
+        }
+
+        function openSegmentEditor() {
+            if (!pipWindow) return;
+            closeSegmentList();
+            if (!activeSegment()) {
+                openNewSegmentDialog();
+                return;
+            }
+            openSegmentDialog({ mode: 'edit', index: activeSegmentIndex });
+        }
+
+        function closeSegmentDialog() {
+            if (!pipWindow) return;
+            const panel = byId('segment-panel');
+            if (panel) panel.remove();
+        }
+
+        function openSegmentDialog(options) {
+            if (!pipWindow) return;
+            closeEditor(true);
+            closeSegmentDialog();
+            closeSegmentList();
+
+            const opts = options || {};
+            const isNew = opts.mode !== 'edit';
+            const index = isNew ? -1 : Number(opts.index);
+            const segment = isNew ? null : segments[index];
+            if (!isNew && !segment) return;
+
+            const startSeconds = isNew
+                ? Number(opts.start) || (videoElement ? videoElement.currentTime : 0)
+                : segment.start;
+
+            const doc = pipWindow.document;
+            const panel = doc.createElement('div');
+            panel.id = 'segment-panel';
+            panel.className = 'editor-panel segment-panel';
+            panel.dataset.mode = isNew ? 'new' : 'edit';
+            panel.dataset.index = String(index);
+            panel.dataset.start = String(startSeconds);
+            panel.innerHTML = `
+                <div class="editor-head">
+                    <span>${isNew ? 'Tandai Lagu Baru' : 'Edit Lagu ' + (index + 1)}</span>
+                    <button type="button" class="editor-close" id="segment-close" title="Tutup">✕</button>
+                </div>
+                <label class="seg-field">Judul
+                    <input type="text" id="segment-title" class="seg-input" autocomplete="off"
+                        spellcheck="false" placeholder="Judul lagu"
+                        value="${escapeHtml(segment ? segment.title : '')}">
+                </label>
+                <label class="seg-field">Artis
+                    <input type="text" id="segment-artist" class="seg-input" autocomplete="off"
+                        spellcheck="false" placeholder="Nama artis (opsional)"
+                        value="${escapeHtml(segment ? segment.artist : '')}">
+                </label>
+                <label class="seg-field">Mulai
+                    <input type="text" id="segment-start" class="seg-input" autocomplete="off"
+                        spellcheck="false" placeholder="mm:ss"
+                        value="${escapeHtml(Core.formatTime(startSeconds))}">
+                </label>
+                <div class="editor-actions">
+                    ${
+                        isNew
+                            ? ''
+                            : '<button type="button" class="sync-btn seg-delete" id="segment-delete">Hapus</button>'
+                    }
+                    <button type="button" class="sync-btn editor-save" id="segment-save">Simpan</button>
+                </div>
+                <p class="editor-hint">${
+                    isNew
+                        ? 'Lagu baru dimulai di posisi ini; segmen sebelumnya otomatis dipotong. Judul dipakai untuk mencari lirik.'
+                        : 'Ubah "Mulai" untuk menggeser batas lagu. Hapus akan menggabungkan waktunya ke lagu sebelumnya.'
+                }</p>
+            `;
+            doc.body.appendChild(panel);
+
+            const bind = (id, handler) => {
+                const element = doc.getElementById(id);
+                if (element) element.addEventListener('click', handler);
+            };
+            bind('segment-close', closeSegmentDialog);
+            bind('segment-save', saveSegmentDialog);
+            if (!isNew) bind('segment-delete', deleteSegmentDialog);
+
+            panel.addEventListener('keydown', (event) => {
+                if (event.key === 'Enter') {
+                    event.preventDefault();
+                    saveSegmentDialog();
+                }
+            });
+
+            const titleInput = doc.getElementById('segment-title');
+            if (titleInput) {
+                titleInput.focus();
+                titleInput.select();
+            }
+        }
+
+        function saveSegmentDialog() {
+            if (!pipWindow) return;
+            const doc = pipWindow.document;
+            const panel = doc.getElementById('segment-panel');
+            if (!panel) return;
+
+            const isNew = panel.dataset.mode === 'new';
+            const index = Number(panel.dataset.index);
+            const titleInput = doc.getElementById('segment-title');
+            const artistInput = doc.getElementById('segment-artist');
+            const startInput = doc.getElementById('segment-start');
+            const title = titleInput ? titleInput.value.trim() : '';
+            const artist = artistInput ? artistInput.value.trim() : '';
+
+            if (!title) {
+                toast('Judul lagu masih kosong');
+                if (titleInput) titleInput.focus();
+                return;
+            }
+
+            const duration =
+                videoElement && isFinite(videoElement.duration) ? videoElement.duration : 0;
+            const parsedStart = Segments.parseTimeToken(startInput ? startInput.value : '');
+            const fallbackStart = isNew
+                ? videoElement
+                    ? videoElement.currentTime
+                    : 0
+                : segments[index]
+                  ? segments[index].start
+                  : 0;
+            const start = parsedStart === null ? fallbackStart : parsedStart;
+
+            if (isNew) {
+                const meta = getVideoMetadata();
+                segments = Segments.addSegment(
+                    segments,
+                    { start: start, title: title, artist: artist, source: 'manual' },
+                    {
+                        duration: duration,
+                        fallbackTitle: meta.title,
+                        fallbackArtist: meta.artist
+                    }
+                );
+                const target = Segments.findSegmentIndex(
+                    segments,
+                    duration > 0 ? Math.min(start, Math.max(0, duration - 1)) : start
+                );
+                const targetSegment = target >= 0 ? segments[target] : null;
+                saveSegmentsNow({ edited: true });
+                closeSegmentDialog();
+                if (videoElement) {
+                    const seekTo = targetSegment ? targetSegment.start : start;
+                    videoElement.currentTime = Math.max(0, seekTo + 0.05);
+                }
+                loadLyricsToPiP(null, null, { segmentIndex: target >= 0 ? target : 0 });
+                toast('Lagu ditandai');
+                return;
+            }
+
+            const originalStart = Number(panel.dataset.start);
+            const patch = { title: title, artist: artist };
+            if (
+                !Number.isFinite(originalStart) ||
+                Math.abs(start - originalStart) > 0.05
+            ) {
+                patch.start = start;
+            }
+
+            segments = Segments.updateSegment(segments, index, patch, { minLength: 1 });
+            const updated = segments[index];
+            saveSegmentsNow({ edited: true });
+            closeSegmentDialog();
+            if (updated && videoElement) {
+                videoElement.currentTime = Math.max(0, updated.start + 0.05);
+            }
+            loadLyricsToPiP(null, null, { segmentIndex: index });
+            toast('Lagu diperbarui');
+        }
+
+        function deleteSegmentDialog() {
+            if (!pipWindow) return;
+            const panel = byId('segment-panel');
+            if (!panel || panel.dataset.mode !== 'edit') return;
+            const index = Number(panel.dataset.index);
+            if (!segments[index]) return;
+
+            segments = Segments.removeSegment(segments, index);
+            closeSegmentDialog();
+
+            if (segments.length === 0) {
+                saveSegmentsNow({ edited: false, disabled: true });
+                loadLyricsToPiP(null, null, { force: true });
+                toast('Semua segmen dihapus');
+                return;
+            }
+
+            saveSegmentsNow({ edited: true });
+            const target = Math.min(index, segments.length - 1);
+            loadLyricsToPiP(null, null, { segmentIndex: target });
+            toast('Segmen dihapus');
+        }
+
+        // Cari lirik lagu berikutnya di belakang layar supaya pergantian lagu
+        // berikutnya tidak menunggu.
+        async function prefetchSegment(index) {
+            if (!Segments || segments.length === 0) return;
+            if (index < 0 || index >= segments.length) return;
+            const segment = segments[index];
+            if (!segment || !segment.title) return;
+            if (segment.manualData) return;
+            if (segment.autoData && isCacheFresh(segment.autoCachedAt)) return;
+            if (prefetchInFlight[index]) return;
+
+            const videoId = getVideoId();
+            const capturedSegments = segments;
+            const controller = new AbortController();
+            const timer = setTimeout(() => controller.abort(), SEARCH_TIMEOUT_MS);
+            prefetchInFlight[index] = true;
+            try {
+                const found = await searchAuto(
+                    {
+                        title: segment.title,
+                        artist: segment.artist || '',
+                        series: '',
+                        duration: Math.max(1, Math.round(segment.end - segment.start))
+                    },
+                    controller.signal,
+                    null
+                );
+                // Hanya simpan kalau video dan daftar segmen belum berubah.
+                if (
+                    found &&
+                    getVideoId() === videoId &&
+                    segments === capturedSegments
+                ) {
+                    segment.autoData = found.track;
+                    segment.autoCachedAt = Date.now();
+                    saveVideoData(videoId, { segments: capturedSegments });
+                }
+            } catch (error) {
+                // prefetch bersifat best-effort: kegagalan diabaikan
+            } finally {
+                clearTimeout(timer);
+                prefetchInFlight[index] = false;
+            }
+        }
+
         function updateSyncDisplay() {
             const display = byId('sync-val');
             if (display) display.textContent = offsetLabel();
@@ -1136,7 +2325,14 @@ if (window === window.top) {
             if (!videoId) return;
             // Tahan sebentar: tombol offset sering ditekan beruntun. Tulis
             // sekali saja setelah berhenti, supaya tidak membanjiri storage.
-            pendingOffset = { videoId: videoId, offset: lyricsTimeOffset };
+            const segment = activeSegment();
+            pendingOffset = {
+                videoId: videoId,
+                offset: lyricsTimeOffset,
+                segment: segment,
+                segmentStart: segment ? segment.start : null,
+                segments: segments.length > 0 ? segments : null
+            };
             clearTimeout(offsetSaveTimer);
             offsetSaveTimer = setTimeout(() => {
                 offsetSaveTimer = null;
@@ -1150,6 +2346,27 @@ if (window === window.top) {
             const pending = pendingOffset;
             pendingOffset = null;
             if (!pending) return;
+            // Offset disimpan per lagu kalau video memakai segmen.
+            if (pending.segment && pending.segments) {
+                if (pending.videoId === getVideoId() && segments.length > 0) {
+                    // Segmen bisa sudah diganti (tambah/edit) selama debounce;
+                    // cari ulang berdasarkan waktu mulai agar tidak menimpa edit.
+                    let target = null;
+                    if (pending.segmentStart !== null) {
+                        target = segments.find(
+                            (item) => Math.abs(item.start - pending.segmentStart) <= 0.5
+                        );
+                    }
+                    if (!target) target = activeSegment();
+                    if (!target) return;
+                    target.offset = pending.offset;
+                    await saveVideoData(pending.videoId, { segments: segments });
+                    return;
+                }
+                pending.segment.offset = pending.offset;
+                await saveVideoData(pending.videoId, { segments: pending.segments });
+                return;
+            }
             await saveVideoData(pending.videoId, { offset: pending.offset });
         }
 
@@ -1482,6 +2699,7 @@ if (window === window.top) {
             `;
             startLoadingProgress();
             bindHeaderEvents({ synced: false, fallbackSearchText: fallbackSearchText });
+            renderSegmentBar();
         }
 
         function startLoadingProgress() {
@@ -1550,6 +2768,7 @@ if (window === window.top) {
             bindHeaderEvents({ synced: false, fallbackSearchText: fallbackSearchText });
             const searchBox = byId('search-box');
             if (searchBox) searchBox.hidden = false;
+            renderSegmentBar();
             applyFontScale();
         }
 
@@ -1603,14 +2822,17 @@ if (window === window.top) {
 
                     element.addEventListener('click', () => {
                         if (videoElement) {
-                            videoElement.currentTime = Math.max(0, line.time + lyricsTimeOffset);
+                            videoElement.currentTime = Math.max(
+                                0,
+                                line.time + segmentBase + lyricsTimeOffset
+                            );
                         }
                     });
 
                     element.addEventListener('contextmenu', (event) => {
                         event.preventDefault();
                         if (!videoElement) return;
-                        lyricsTimeOffset = videoElement.currentTime - line.time;
+                        lyricsTimeOffset = videoElement.currentTime - segmentBase - line.time;
                         updateSyncDisplay();
                         saveOffset();
                         toast('Offset: ' + offsetLabel());
@@ -1639,8 +2861,12 @@ if (window === window.top) {
 
             bindHeaderEvents({ synced: synced, fallbackSearchText: fallbackSearchText });
             closeMenu();
+            renderSegmentBar();
             applyFontScale();
             maybeAutoLatin();
+            if (segments.length > 0 && activeSegmentIndex >= 0) {
+                prefetchSegment(activeSegmentIndex + 1);
+            }
         }
 
         function renderResults(results, manualQuery, meta) {
@@ -1707,8 +2933,7 @@ if (window === window.top) {
                 item.appendChild(badgeWrapper);
 
                 item.addEventListener('click', async () => {
-                    const videoId = getVideoId();
-                    if (videoId) await saveVideoData(videoId, { manualData: track });
+                    await applyLyricsPatch({ manualData: track });
                     loadLyricsToPiP(null, track);
                 });
 
@@ -1717,6 +2942,7 @@ if (window === window.top) {
 
             container.appendChild(list);
             bindHeaderEvents({ synced: false, fallbackSearchText: manualQuery });
+            renderSegmentBar();
             applyFontScale();
         }
 
@@ -1748,6 +2974,7 @@ if (window === window.top) {
             bindHeaderEvents({ synced: false, fallbackSearchText: fallbackSearchText });
             const searchBox = byId('search-box');
             if (searchBox) searchBox.hidden = false;
+            renderSegmentBar();
             applyFontScale();
         }
 
@@ -1949,8 +3176,8 @@ if (window === window.top) {
             const key = Core.hashText(latinState.original.join('\n'));
             latinState.key = key;
 
-            // Gunakan hasil romanisasi yang pernah disimpan untuk video ini.
-            const cached = currentVideoData && currentVideoData.latinData;
+            // Gunakan hasil romanisasi yang pernah disimpan untuk lagu ini.
+            const cached = activeLatinData();
             if (
                 cached &&
                 cached.key === key &&
@@ -2011,9 +3238,15 @@ if (window === window.top) {
 
                 const videoId = getVideoId();
                 if (videoId) {
-                    saveVideoData(videoId, {
-                        latinData: { key: key, lines: converted }
-                    });
+                    const latinData = { key: key, lines: converted };
+                    if (activeSegment()) {
+                        await applyLyricsPatch({ latinData: latinData });
+                    } else {
+                        currentVideoData = Object.assign({}, currentVideoData, {
+                            latinData: latinData
+                        });
+                        await saveVideoData(videoId, { latinData: latinData });
+                    }
                 }
             } catch (error) {
                 console.error('Brave Mini Lyrics: romanisasi gagal', error);
@@ -2097,7 +3330,9 @@ if (window === window.top) {
         }
 
         function editorDraftKey(videoId) {
-            return DRAFT_PREFIX + (videoId || 'local');
+            // Draft dipisah per lagu supaya draft kompilasi tidak bocor ke lagu lain.
+            const segment = activeSegment();
+            return DRAFT_PREFIX + (videoId || 'local') + (segment ? ':' + segment.id : '');
         }
 
         async function loadEditorDraft(videoId) {
@@ -2155,6 +3390,7 @@ if (window === window.top) {
         function openEditor() {
             if (!pipWindow) return;
             closeMenu();
+            closeSegmentDialog();
             closeEditor(true);
 
             const doc = pipWindow.document;
@@ -2241,26 +3477,22 @@ if (window === window.top) {
                 return;
             }
 
+            const segment = activeSegment();
             const meta = getVideoMetadata();
             const videoId = getVideoId();
             const synced = /\[\d{1,3}:[0-5]?\d(?:[.:]\d{1,3})?\]/.test(text);
             const manualData = {
-                id: 'manual:' + (videoId || 'local'),
-                trackName: meta.title || 'Lirik manual',
-                artistName: meta.artist || '',
-                duration: meta.duration || 0,
+                id: 'manual:' + (videoId || 'local') + (segment ? ':' + segment.id : ''),
+                trackName: (segment && segment.title) || meta.title || 'Lirik manual',
+                artistName: (segment && segment.artist) || meta.artist || '',
+                duration: segment ? Math.round(segment.end - segment.start) : meta.duration || 0,
                 syncedLyrics: synced ? text : null,
                 plainLyrics: synced ? null : text,
                 source: 'manual'
             };
 
-            currentVideoData = Object.assign({}, currentVideoData, {
-                manualData: manualData,
-                latinData: null
-            });
-            if (videoId) {
-                await saveVideoData(videoId, { manualData: manualData, latinData: null });
-            }
+            currentVideoData = Object.assign({}, currentVideoData, { latinData: null });
+            await applyLyricsPatch({ manualData: manualData, latinData: null });
             await clearEditorDraft(videoId);
             closeEditor(true);
             loadLyricsToPiP(null, manualData);
@@ -2269,18 +3501,17 @@ if (window === window.top) {
 
         async function resetManualLyrics() {
             if (!pipWindow) return;
-            if (!currentVideoData || !currentVideoData.manualData) {
+            const segment = activeSegment();
+            const existing = segment
+                ? segment.manualData
+                : currentVideoData && currentVideoData.manualData;
+            if (!existing) {
                 toast('Tidak ada lirik manual');
                 return;
             }
             const videoId = getVideoId();
-            currentVideoData = Object.assign({}, currentVideoData, {
-                manualData: null,
-                latinData: null
-            });
-            if (videoId) {
-                await saveVideoData(videoId, { manualData: null, latinData: null });
-            }
+            currentVideoData = Object.assign({}, currentVideoData, { latinData: null });
+            await applyLyricsPatch({ manualData: null, latinData: null });
             await clearEditorDraft(videoId);
             closeEditor(true);
             loadLyricsToPiP(null, null, { force: true });
@@ -2341,7 +3572,7 @@ if (window === window.top) {
             // offset tidak dikurangi di sini hasil tap akan bergeser.
             tapState.times[tapState.index] = Math.max(
                 0,
-                videoElement.currentTime - lyricsTimeOffset
+                videoElement.currentTime - segmentBase - lyricsTimeOffset
             );
             tapState.index += 1;
             renderTapState();
@@ -2393,6 +3624,10 @@ if (window === window.top) {
         async function loadLyricsToPiP(manualQuery, directTrackData, options) {
             if (!pipWindow) return;
 
+            closeSegmentDialog();
+            clearTimeout(segmentSwitchTimer);
+            segmentSwitchTimer = null;
+
             // Simpan offset video sebelumnya sebelum membaca data video baru.
             await flushOffset();
 
@@ -2413,19 +3648,21 @@ if (window === window.top) {
 
             const meta = getVideoMetadata();
             const videoId = getVideoId();
+            if (videoId !== lastLoadedVideoId) prefetchInFlight = {};
             lastLoadedVideoId = videoId;
 
             // Metadata untuk pencarian: artis asli, atau nama seri kalau
-            // channel-nya soundtrack.
-            const searchMeta = {
+            // channel-nya soundtrack. Nilainya bisa diganti ke metadata lagu
+            // saat video berupa kompilasi (lihat di bawah).
+            let searchMeta = {
                 title: meta.title,
                 artist: meta.searchArtist || '',
                 series: meta.series || '',
                 duration: meta.duration
             };
-            const artistLabel = meta.searchArtist || meta.series || meta.artist || '';
+            let artistLabel = meta.searchArtist || meta.series || meta.artist || '';
 
-            const fallbackSearchText =
+            let fallbackSearchText =
                 manualQuery ||
                 (meta.title
                     ? meta.title + (artistLabel ? ' - ' + artistLabel : '')
@@ -2439,11 +3676,93 @@ if (window === window.top) {
                 latinData: null
             };
             if (videoId) saved = await getVideoData(videoId);
+
+            // Video panjang tanpa daftar lagu: beri kesempatan page-bridge
+            // mengirim Chapters sebelum memutuskan mode video panjang.
+            if (videoId && Segments && Segments.shouldUseLongVideoMode(meta)) {
+                await ensureChapterData(videoId, 700);
+            }
+
             if (token !== loadToken) {
                 clearTimeout(timeoutId);
                 return;
             }
             currentVideoData = saved;
+
+            // Deteksi segmen video kompilasi. Kalau ada, konteks lirik pindah
+            // dari "satu video" ke "satu lagu di dalam video".
+            segments = videoId ? getVideoSegments(meta, saved) : [];
+            segmentsEdited = Boolean(saved.segmentsEdited);
+            segmentsDisabled = Boolean(saved.segmentsDisabled);
+
+            if (segments.length > 0) {
+                const onlyLongVideoPlaceholder =
+                    segments.length === 1 &&
+                    segments[0] &&
+                    segments[0].source === 'long-video' &&
+                    !segments[0].title;
+                if (
+                    !segmentsEdited &&
+                    !onlyLongVideoPlaceholder &&
+                    segmentsSignature(saved.segments) !== segmentsSignature(segments)
+                ) {
+                    saveVideoData(videoId, { segments: segments });
+                }
+
+                let index = Number.isInteger(opts.segmentIndex) ? opts.segmentIndex : -1;
+                if (index < 0) {
+                    index = Segments.findSegmentIndex(
+                        segments,
+                        videoElement ? videoElement.currentTime : 0
+                    );
+                }
+                // Pencarian manual saat berada di jeda (sebelum lagu pertama)
+                // tetap diarahkan ke segmen terdekat supaya tidak mentok.
+                if (index < 0 && manualQuery) {
+                    const time = videoElement ? videoElement.currentTime : 0;
+                    index = 0;
+                    for (let i = 0; i < segments.length; i += 1) {
+                        if (time >= segments[i].start) index = i;
+                    }
+                }
+                if (index < 0) {
+                    activeSegmentIndex = -1;
+                    segmentBase = 0;
+                    clearTimeout(timeoutId);
+                    if (activeAbort === controller) activeAbort = null;
+                    renderSegmentWaiting();
+                    return;
+                }
+                if (index >= segments.length) index = segments.length - 1;
+
+                activeSegmentIndex = index;
+                segmentBase = segments[index].start;
+                saved = currentSegmentSaved() || saved;
+
+                const segment = segments[index];
+                searchMeta = {
+                    title: segment.title || '',
+                    artist: segment.artist || '',
+                    series: '',
+                    duration: Math.max(1, Math.round(segment.end - segment.start))
+                };
+                artistLabel = segment.artist || '';
+                fallbackSearchText =
+                    manualQuery ||
+                    (segment.title
+                        ? segment.title + (artistLabel ? ' - ' + artistLabel : '')
+                        : artistLabel);
+
+                if (!manualQuery && !directTrackData && !saved.manualData && !searchMeta.title) {
+                    clearTimeout(timeoutId);
+                    if (activeAbort === controller) activeAbort = null;
+                    renderSegmentUntitled();
+                    return;
+                }
+            } else {
+                activeSegmentIndex = -1;
+                segmentBase = 0;
+            }
 
             const report = (message, progress) => {
                 if (token === loadToken) updateLoadingStatus(message, progress);
@@ -2468,14 +3787,18 @@ if (window === window.top) {
             } else if (sourceData) {
                 renderLoading(
                     usedCache ? 'Memuat lirik tersimpan…' : 'Memuat lirik…',
-                    sourceData.trackName || meta.title,
+                    activeSegment()
+                        ? segmentDisplayTitle(activeSegment())
+                        : sourceData.trackName || meta.title,
                     fallbackSearchText,
                     'Memuat lirik…'
                 );
             } else {
                 renderLoading(
                     'Mencari lirik…',
-                    meta.artist + ' • ' + meta.title,
+                    searchMeta.artist
+                        ? searchMeta.artist + ' • ' + searchMeta.title
+                        : searchMeta.title,
                     fallbackSearchText,
                     'Menghubungkan ke database lirik…'
                 );
@@ -2483,11 +3806,18 @@ if (window === window.top) {
 
             try {
                 if (sourceData) {
+                    const contextSegment = activeSegment();
                     const lyricsData = {
                         found: true,
                         isSynced: Boolean(sourceData.syncedLyrics),
-                        trackName: sourceData.trackName || meta.title,
-                        artistName: sourceData.artistName || meta.artist,
+                        trackName:
+                            (contextSegment && contextSegment.title) ||
+                            sourceData.trackName ||
+                            meta.title,
+                        artistName:
+                            (contextSegment && contextSegment.artist) ||
+                            sourceData.artistName ||
+                            meta.artist,
                         lrc: sourceData.syncedLyrics,
                         text: sourceData.plainLyrics
                     };
@@ -2529,16 +3859,21 @@ if (window === window.top) {
                         autoCachedAt: Date.now()
                     };
                     if (opts.force) patch.manualData = null;
-                    await saveVideoData(videoId, patch);
+                    await applyLyricsPatch(patch);
                 }
                 if (token !== loadToken) return;
 
+                const contextSegment = activeSegment();
                 renderFound(
                     {
                         found: true,
                         isSynced: Boolean(found.track.syncedLyrics),
-                        trackName: found.track.trackName,
-                        artistName: found.track.artistName,
+                        trackName:
+                            (contextSegment && contextSegment.title) ||
+                            found.track.trackName,
+                        artistName:
+                            (contextSegment && contextSegment.artist) ||
+                            found.track.artistName,
                         lrc: found.track.syncedLyrics,
                         text: found.track.plainLyrics
                     },
@@ -2612,11 +3947,17 @@ if (window === window.top) {
             const container = document_.createElement('div');
             container.id = 'lyrics-container';
 
+            const segmentBar = document_.createElement('div');
+            segmentBar.id = 'segment-bar';
+            segmentBar.className = 'segment-bar';
+            segmentBar.hidden = true;
+
             const toastElement = document_.createElement('div');
             toastElement.id = 'toast';
 
             document_.body.appendChild(handle);
             document_.body.appendChild(header);
+            document_.body.appendChild(segmentBar);
             document_.body.appendChild(container);
             document_.body.appendChild(toastElement);
 
@@ -2630,8 +3971,15 @@ if (window === window.top) {
             );
 
             document_.addEventListener('keydown', (event) => {
-                if (event.key === 'Escape' && document_.getElementById('editor-panel')) {
+                if (
+                    event.key === 'Escape' &&
+                    (document_.getElementById('editor-panel') ||
+                        document_.getElementById('segment-panel') ||
+                        document_.getElementById('segment-list-panel'))
+                ) {
                     event.preventDefault();
+                    closeSegmentList();
+                    closeSegmentDialog();
                     closeEditor();
                     return;
                 }
@@ -2663,6 +4011,10 @@ if (window === window.top) {
             });
 
             win.addEventListener('pagehide', () => {
+                // Jendela lama yang diganti lewat "pin ulang" tidak boleh
+                // mereset state jendela baru.
+                if (pipWindow !== win) return;
+
                 savePipBounds(true);
                 clearTimeout(pipBoundsSaveTimer);
                 pipBoundsSaveTimer = null;
@@ -2683,10 +4035,16 @@ if (window === window.top) {
                 clearTimeout(toastTimer);
                 clearTimeout(scrollResetTimer);
                 clearTimeout(menuHoverTimer);
+                clearTimeout(segmentSwitchTimer);
+                segmentSwitchTimer = null;
+                prefetchInFlight = {};
                 pipWindow = null;
                 parsedLyrics = [];
                 lineElements = [];
                 currentHighlightIndex = -1;
+                segments = [];
+                activeSegmentIndex = -1;
+                segmentBase = 0;
                 menuOpen = false;
                 menuArmed = false;
                 tapState = null;
@@ -2758,19 +4116,7 @@ if (window === window.top) {
             }
         }
 
-        function toggleLyricsPiP() {
-            if (pipWindow) {
-                pipWindow.close();
-                return;
-            }
-
-            videoElement = getVideoElement();
-            if (!videoElement) {
-                pageToast('Tidak ada video yang sedang diputar.');
-                return;
-            }
-
-            const savedBounds = clampBounds(settings.pipBounds);
+        function requestLyricsWindow(savedBounds) {
             const width = savedBounds ? savedBounds.width : 360;
             const height = savedBounds ? savedBounds.height : 560;
 
@@ -2812,12 +4158,69 @@ if (window === window.top) {
             bootLyricsWindow(win, savedBounds);
         }
 
+        function toggleLyricsPiP() {
+            if (pipWindow) {
+                pipWindow.close();
+                return;
+            }
+
+            videoElement = getVideoElement();
+            if (!videoElement) {
+                pageToast('Tidak ada video yang sedang diputar.');
+                return;
+            }
+
+            requestLyricsWindow(clampBounds(settings.pipBounds));
+        }
+
+        // Chromium kadang menurunkan jendela PiP dari level "selalu di atas"
+        // (misalnya setelah aplikasi lain fullscreen). Tidak ada API untuk
+        // menaikkannya kembali, jadi jendela ditutup lalu dibuka ulang dengan
+        // ukuran/posisi yang sama. Data lirik tetap karena tersimpan per video.
+        function repinLyricsPiP() {
+            if (!pipWindow) {
+                toggleLyricsPiP();
+                return;
+            }
+
+            videoElement = getVideoElement();
+            if (!videoElement) {
+                pageToast('Tidak ada video yang sedang diputar.');
+                return;
+            }
+
+            savePipBounds(true);
+            flushOffset();
+            const savedBounds = clampBounds(settings.pipBounds);
+            const current = pipWindow;
+            let reopened = false;
+            const reopen = () => {
+                if (reopened) return;
+                reopened = true;
+                requestLyricsWindow(savedBounds);
+            };
+
+            // Buka lagi segera setelah jendela lama benar-benar tertutup.
+            current.addEventListener('pagehide', () => setTimeout(reopen, 0), { once: true });
+            try {
+                current.close();
+            } catch (error) {
+                reopen();
+                return;
+            }
+            // Jaga-jaga kalau pagehide tidak terpanggil.
+            setTimeout(reopen, 400);
+        }
+
         // ==========================================
         // EVENT GLOBAL
         // ==========================================
         chrome.runtime.onMessage.addListener((request) => {
-            if (request && request.action === 'toggle_lyrics') {
+            if (!request) return;
+            if (request.action === 'toggle_lyrics') {
                 toggleLyricsPiP();
+            } else if (request.action === 'repin_lyrics') {
+                repinLyricsPiP();
             }
         });
 
@@ -2911,6 +4314,7 @@ if (window === window.top) {
         });
         window.addEventListener('popstate', checkVideoChange);
 
+        setupChapterBridge();
         loadSettings();
 
         console.log('Brave Mini Lyrics: content script siap.');

@@ -57,11 +57,12 @@ chrome.action.onClicked.addListener((tab) => {
 });
 
 chrome.commands.onCommand.addListener((command) => {
-    if (command !== 'toggle-lyrics') return;
+    if (command !== 'toggle-lyrics' && command !== 'repin-lyrics') return;
+    const action = command === 'repin-lyrics' ? 'repin_lyrics' : 'toggle_lyrics';
     chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
         const tab = tabs && tabs[0];
         if (!tab || !tab.id) return;
-        chrome.tabs.sendMessage(tab.id, { action: 'toggle_lyrics' }, () => {
+        chrome.tabs.sendMessage(tab.id, { action: action }, () => {
             void chrome.runtime.lastError;
         });
     });
